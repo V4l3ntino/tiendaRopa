@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MODE — Tienda de Moda Online | Ropa, Zapatos y Accesorios</title>
+  <meta name="description" content="Descubre la mejor selección de moda en MODE. Chaquetas, zapatos, pantalones, camisetas, accesorios y más. Envío gratis desde 50€. Las mejores marcas al mejor precio.">
+  <meta name="keywords" content="moda, ropa, tienda online, chaquetas, zapatos, pantalones, camisetas, accesorios, ropa hombre, ropa mujer">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="/">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "MODE",
+    "url": "/",
+    "description": "Tienda online de moda con chaquetas, zapatos, pantalones, camisetas y accesorios.",
+    "potentialAction": {
+      "@type": "SearchAction",
+      "target": "/catalogo?q={search_term_string}",
+      "query-input": "required name=search_term_string"
+    }
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "MODE Clothing Store",
+    "url": "/",
+    "logo": "/assets/favicon.png",
+    "sameAs": ["https://instagram.com/mode", "https://facebook.com/mode"]
+  }
+  </script>
+</head>
+<body>
+  <a class="skipLink" href="#main">Saltar al contenido</a>
+
+  <header class="header" role="banner">
+    <div class="headerInner">
+      <a href="/" class="logo" aria-label="MODE inicio"><span>MOD</span>E</a>
+      <button class="menuToggle" aria-label="Abrir menú" onclick="toggleMenu()">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+      </button>
+      <nav class="nav" role="navigation" aria-label="Navegación principal">
+        <a href="/" data-nav>Inicio</a>
+        <a href="/catalogo" data-nav>Catálogo</a>
+        <a href="/carrito" data-nav id="navCart">Carrito <span class="cartBadge" id="cartBadge" style="display:none">0</span></a>
+        <a href="/perfil" data-nav id="navProfile" style="display:none">Perfil</a>
+        <a href="/pedidos" data-nav id="navOrders" style="display:none">Pedidos</a>
+        <a href="/admin" data-nav id="navAdmin" style="display:none">Admin</a>
+        <a href="/login" data-nav id="navLogin">Entrar</a>
+        <a href="/logout" id="navLogout" style="display:none" onclick="logout()">Salir</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" role="main">
+    <div id="app"></div>
+  </main>
+
+  <footer class="footer" role="contentinfo">
+    <div class="footerInner">
+      <div class="footerCol">
+        <strong class="footerBrand"><span>MOD</span>E</strong>
+        <p>Tu tienda de moda online premium. Las mejores marcas internacionales al mejor precio, con envío rápido y devoluciones gratuitas.</p>
+      </div>
+      <div class="footerCol">
+        <strong>Categorías</strong>
+        <a href="/catalogo?categoria=chaquetas" data-nav>Chaquetas</a>
+        <a href="/catalogo?categoria=zapatos" data-nav>Zapatos</a>
+        <a href="/catalogo?categoria=pantalones" data-nav>Pantalones</a>
+        <a href="/catalogo?categoria=camisetas" data-nav>Camisetas</a>
+        <a href="/catalogo?categoria=accesorios" data-nav>Accesorios</a>
+      </div>
+      <div class="footerCol">
+        <strong>Atención al cliente</strong>
+        <a href="/catalogo" data-nav>Envío y devoluciones</a>
+        <a href="/catalogo" data-nav>Preguntas frecuentes</a>
+        <a href="/catalogo" data-nav>Contacto</a>
+        <a href="/catalogo" data-nav>Guía de tallas</a>
+      </div>
+      <div class="footerCol">
+        <strong>Síguenos</strong>
+        <a href="https://instagram.com" target="_blank" rel="noopener">Instagram</a>
+        <a href="https://facebook.com" target="_blank" rel="noopener">Facebook</a>
+        <a href="https://tiktok.com" target="_blank" rel="noopener">TikTok</a>
+      </div>
+    </div>
+    <div class="footerBottom">
+      &copy; 2026 MODE Clothing Store. Todos los derechos reservados.
+    </div>
+  </footer>
+
+  <button class="chatToggle" id="chatToggle" aria-label="Abrir asistente virtual" onclick="toggleChat()">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+  </button>
+
+  <div class="chatBox" id="chatBox" style="display:none">
+    <div class="chatHeader">
+      <div class="chatHeaderInfo">
+        <div class="chatAvatar">M</div>
+        <div>
+          <strong>Asistente MODE</strong>
+          <small>Online · Te ayudo a comprar</small>
+        </div>
+      </div>
+      <button onclick="toggleChat()" aria-label="Cerrar chat">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="chatMessages" id="chatMessages">
+      <div class="chatMsg bot">¡Hola! Soy el asistente virtual de <strong>MODE</strong>. ¿Buscas algo en concreto? Puedo ayudarte con recomendaciones de estilo, tallas o presupuesto. ¡Pregúntame lo que necesites!</div>
+    </div>
+    <form class="chatInput" id="chatForm" onsubmit="sendChat(event)">
+      <input type="text" id="chatInput" placeholder="Ej: busca chaquetas bajo 80€..." required autocomplete="off">
+      <button type="submit" aria-label="Enviar mensaje">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+      </button>
+    </form>
+  </div>
+
+  <div class="overlay" id="overlay" onclick="closeAll()" style="display:none"></div>
+
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>

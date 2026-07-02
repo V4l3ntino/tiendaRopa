@@ -1,0 +1,14 @@
+services:
+  demo1:
+    build: .
+    container_name: demo1-reservas
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-8011}:8011"
+    volumes:
+      - demo1_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  demo1_data:
