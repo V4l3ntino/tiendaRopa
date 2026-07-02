@@ -53,6 +53,8 @@ class ProductIn(BaseModel):
     brand: str = Field(default="", max_length=100)
     category_id: int
     description: str = Field(default="", max_length=2000)
+    characteristics: str = Field(default="", max_length=4000)
+    composition_care: str = Field(default="", max_length=4000)
     price: float = Field(gt=0)
     compare_price: float | None = None
     image: str = Field(default="", max_length=500)
@@ -102,7 +104,8 @@ class CheckoutIn(BaseModel):
 
 class ChatIn(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
-    history: list[dict[str, str]] = []
+    history: list[dict[str, str]] = Field(default_factory=list)
+    context: str = Field(default="", max_length=12000)
 
 
 app = FastAPI(title="MODE — Tienda de moda")
@@ -281,6 +284,15 @@ def init_db() -> None:
         );
         """)
 
+        def ensure_column(table: str, column_def: str) -> None:
+            column_name = column_def.split()[0]
+            existing_cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+            if column_name not in existing_cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column_def}")
+
+        ensure_column("products", "characteristics TEXT DEFAULT ''")
+        ensure_column("products", "composition_care TEXT DEFAULT ''")
+
         if not conn.execute("SELECT id FROM users WHERE email='admin@mode.com'").fetchone():
             conn.execute(
                 "INSERT INTO users (name,email,password,role,token,created_at) VALUES (?,?,?,?,?,?)",
@@ -457,9 +469,9 @@ def create_product(payload: ProductIn, token: str = Query("")) -> dict:
     with db() as conn:
         conn.execute(
             """INSERT INTO products
-            (name,brand,category_id,description,price,compare_price,image,images,sizes,colors,tags,gender,stock,active,featured,on_sale,rating,created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (payload.name, payload.brand, payload.category_id, payload.description, payload.price, payload.compare_price,
+            (name,brand,category_id,description,characteristics,composition_care,price,compare_price,image,images,sizes,colors,tags,gender,stock,active,featured,on_sale,rating,created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (payload.name, payload.brand, payload.category_id, payload.description, payload.characteristics, payload.composition_care, payload.price, payload.compare_price,
              payload.image, payload.images, payload.sizes, payload.colors, payload.tags, payload.gender, payload.stock,
              int(payload.active), int(payload.featured), int(payload.on_sale), payload.rating, datetime.utcnow().isoformat()),
         )
@@ -472,9 +484,9 @@ def update_product(product_id: int, payload: ProductIn, token: str = Query("")) 
     require_admin(token)
     with db() as conn:
         conn.execute(
-            """UPDATE products SET name=?,brand=?,category_id=?,description=?,price=?,compare_price=?,image=?,images=?,
+            """UPDATE products SET name=?,brand=?,category_id=?,description=?,characteristics=?,composition_care=?,price=?,compare_price=?,image=?,images=?,
             sizes=?,colors=?,tags=?,gender=?,stock=?,active=?,featured=?,on_sale=?,rating=? WHERE id=?""",
-            (payload.name, payload.brand, payload.category_id, payload.description, payload.price, payload.compare_price, payload.image,
+            (payload.name, payload.brand, payload.category_id, payload.description, payload.characteristics, payload.composition_care, payload.price, payload.compare_price, payload.image,
              payload.images, payload.sizes, payload.colors, payload.tags, payload.gender, payload.stock, int(payload.active),
              int(payload.featured), int(payload.on_sale), payload.rating, product_id),
         )
@@ -769,7 +781,7 @@ async def upload_product_image(token: str = Query(""), file: UploadFile = File(.
     return {"url": f"/assets/uploads/products/{name}"}
 
 
-XLSX_COLUMNS = ["name", "brand", "category_name", "description", "price", "compare_price", "image", "sizes", "colors", "tags", "gender", "stock", "active", "featured", "on_sale", "rating"]
+XLSX_COLUMNS = ["name", "brand", "category_name", "description", "characteristics", "composition_care", "price", "compare_price", "image", "sizes", "colors", "tags", "gender", "stock", "active", "featured", "on_sale", "rating"]
 
 
 @app.get("/api/admin/products/import-template")
@@ -780,7 +792,7 @@ def import_template(token: str = Query("")) -> StreamingResponse:
     ws = wb.active
     ws.title = "Productos"
     ws.append(XLSX_COLUMNS)
-    ws.append(["Camiseta Premium", "Nike", "Camisetas", "Descripción", 29.95, 39.95, "", "S,M,L", "Negro,Blanco", "nuevo,popular", "unisex", 50, 1, 0, 1, 4.5])
+    ws.append(["Camiseta Premium", "Nike", "Camisetas", "Descripción", "Marca: Nike\nCategoría: Camisetas\nGénero: unisex", "Algodón suave. Lavar a baja temperatura.", 29.95, 39.95, "", "S,M,L", "Negro,Blanco", "nuevo,popular", "unisex", 50, 1, 0, 1, 4.5])
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -856,6 +868,8 @@ async def import_excel(token: str = Query(""), file: UploadFile = File(...)) -> 
                     "brand": brand,
                     "category_id": cats[cat.lower()],
                     "description": str(get("description")),
+                    "characteristics": str(get("characteristics", "")),
+                    "composition_care": str(get("composition_care", "")),
                     "price": float(get("price")),
                     "compare_price": float(get("compare_price", 0)) or None,
                     "image": str(get("image", "")),
@@ -872,17 +886,70 @@ async def import_excel(token: str = Query(""), file: UploadFile = File(...)) -> 
                 existing = conn.execute("SELECT id FROM products WHERE name=? AND brand=?", (name, brand)).fetchone()
                 if existing:
                     conn.execute(
-                        """UPDATE products SET brand=?,category_id=?,description=?,price=?,compare_price=?,image=?,sizes=?,colors=?,tags=?,gender=?,stock=?,active=?,featured=?,on_sale=?,rating=? WHERE id=?""",
-                        (*payload.values(), existing["id"]),
+                        """UPDATE products SET brand=?,category_id=?,description=?,characteristics=?,composition_care=?,price=?,compare_price=?,image=?,sizes=?,colors=?,tags=?,gender=?,stock=?,active=?,featured=?,on_sale=?,rating=? WHERE id=?""",
+                        (payload["brand"], payload["category_id"], payload["description"], payload["characteristics"], payload["composition_care"], payload["price"], payload["compare_price"], payload["image"], payload["sizes"], payload["colors"], payload["tags"], payload["gender"], payload["stock"], payload["active"], payload["featured"], payload["on_sale"], payload["rating"], existing["id"]),
                     )
                     updated += 1
                 else:
-                    conn.execute("""INSERT INTO products (name,brand,category_id,description,price,compare_price,image,sizes,colors,tags,gender,stock,active,featured,on_sale,rating,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (name, *payload.values(), datetime.utcnow().isoformat()))
+                    conn.execute("""INSERT INTO products (name,brand,category_id,description,characteristics,composition_care,price,compare_price,image,sizes,colors,tags,gender,stock,active,featured,on_sale,rating,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (name, payload["brand"], payload["category_id"], payload["description"], payload["characteristics"], payload["composition_care"], payload["price"], payload["compare_price"], payload["image"], payload["sizes"], payload["colors"], payload["tags"], payload["gender"], payload["stock"], payload["active"], payload["featured"], payload["on_sale"], payload["rating"], datetime.utcnow().isoformat()))
                     created += 1
             except Exception as exc:
                 skipped += 1
                 errors.append(f"Fila {n}: {exc}")
     return {"created": created, "updated": updated, "skipped": skipped, "errors": errors}
+
+
+@app.post("/api/admin/products/ai-copy")
+def admin_product_ai_copy(payload: ProductIn, token: str = Query("")) -> dict:
+    require_admin(token)
+    if not payload.name.strip() or not payload.brand.strip() or not payload.category_id:
+        raise HTTPException(400, "Rellena nombre, marca y categoría antes de generar con IA")
+    with db() as conn:
+        cat = conn.execute("SELECT name FROM categories WHERE id=?", (payload.category_id,)).fetchone()
+    category_name = cat["name"] if cat else "General"
+    prompt = (
+        "Genera copy para un producto de una tienda de moda en español. Devuelve EXACTAMENTE este formato, sin markdown ni texto extra:\n"
+        "DESCRIPTION:\n<un párrafo breve y comercial>\n\n"
+        "CHARACTERISTICS:\n<texto en líneas para el bloque Características>\n\n"
+        "COMPOSITION_CARE:\n<texto breve de composición y cuidados>\n\n"
+        "No copies el texto actual tal cual, mejora la redacción.\n\n"
+        f"Nombre: {payload.name.strip()}\n"
+        f"Marca: {payload.brand.strip()}\n"
+        f"Categoría: {category_name}\n"
+        f"Precio: {payload.price}\n"
+        f"Género: {payload.gender}\n"
+        f"Tags: {payload.tags}\n"
+        f"Descripción actual: {payload.description.strip()}"
+    )
+    fallback = {
+        "description": payload.description.strip() or f"{payload.name.strip()} de {payload.brand.strip()}, pensada para el día a día con estilo y comodidad.",
+        "characteristics": f"Marca: {payload.brand.strip()}\nCategoría: {category_name}\nGénero: {payload.gender}\nPrecio: {payload.price:.2f} €",
+        "composition_care": "Tejido de alta calidad. Consulta la etiqueta para instrucciones de lavado y cuidado.",
+    }
+    try:
+        req = urllib.request.Request(
+            f"{OLLAMA_URL}/api/generate",
+            data=json.dumps({"model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "options": {"num_predict": 500}}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as res:
+            data = json.loads(res.read().decode())
+        text = (data.get("response") or "").strip()
+        parsed = {}
+        for key, label in (("description", "DESCRIPTION"), ("characteristics", "CHARACTERISTICS"), ("composition_care", "COMPOSITION_CARE")):
+            m = re.search(rf"{label}\s*:\s*(.*?)(?=\n[A-Z_ ]+\s*:\s*|\Z)", text, re.S | re.I)
+            if m:
+                parsed[key] = m.group(1).strip()
+        if not parsed:
+            parsed = json.loads(text)
+        return {
+            "description": str(parsed.get("description", fallback["description"])).strip(),
+            "characteristics": str(parsed.get("characteristics", fallback["characteristics"])).strip(),
+            "composition_care": str(parsed.get("composition_care", fallback["composition_care"])).strip(),
+            "model": OLLAMA_MODEL,
+        }
+    except Exception:
+        return {**fallback, "model": "fallback"}
 
 
 @app.post("/api/ai/chat")
@@ -892,16 +959,26 @@ def ai_chat(payload: ChatIn, token: str = Query("")) -> dict:
             f"- {r['name']} ({r['brand']}), {r['price']} EUR, stock {r['stock']}"
             for r in conn.execute("SELECT name,brand,price,stock FROM products WHERE active=1 ORDER BY rating DESC LIMIT 12")
         )
-    prompt = (
-        "Eres asesor de moda de una tienda online. Responde en español, breve y útil. "
-        "Recomienda solo productos del catálogo si encajan.\nCatálogo:\n"
-        f"{products_ctx}\nPregunta: {payload.message}"
-    )
+    history_lines = []
+    for item in (payload.history or [])[-12:]:
+        role = str(item.get("role", "")).strip().lower()
+        content = str(item.get("content", "")).strip()
+        if not content:
+            continue
+        if role not in ("user", "assistant"):
+            role = "user"
+        history_lines.append(f"{role}: {content}")
+    prompt = "Eres asesor de moda de una tienda online. Responde en español, breve y útil. Recomienda solo productos del catálogo si encajan."
+    if history_lines:
+        prompt += "\n\nHistorial reciente de conversación:\n" + "\n".join(history_lines)
+    if payload.context.strip():
+        prompt += f"\n\nContexto interno para analizar la tienda:\n{payload.context.strip()}"
+    prompt += f"\n\nCatálogo disponible:\n{products_ctx}\n\nPregunta del usuario: {payload.message}"
     fallback = "Ahora mismo puedo ayudarte con chaquetas, camisetas, zapatos, pantalones y accesorios. Dime talla, color, presupuesto y ocasión para recomendarte una opción."
     try:
         req = urllib.request.Request(
             f"{OLLAMA_URL}/api/generate",
-            data=json.dumps({"model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "options": {"num_predict": 220}}).encode(),
+            data=json.dumps({"model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "options": {"num_predict": 500}}).encode(),
             headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as res:
@@ -921,4 +998,3 @@ def spa(path: str):
     if path.startswith("api/") or path.startswith("assets/") or path in ("sitemap.xml", "robots.txt"):
         return JSONResponse({"detail": "Not Found"}, status_code=404)
     return FileResponse(FRONTEND / "index.html")
-

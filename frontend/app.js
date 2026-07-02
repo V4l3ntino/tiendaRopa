@@ -5,6 +5,13 @@ const state = {
   categories: [],
   filters: {},
   chatOpen: false,
+  catalogRequestId: 0,
+  chatAbortController: null,
+  chatTypingTimer: null,
+  chatTypingEl: null,
+  chatStatusEl: null,
+  adminDashboard: null,
+  chatHistory: (() => { try { const v = JSON.parse(localStorage.getItem('mode_chat_history') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })(),
 };
 
 const appEl = document.getElementById('app');
@@ -22,6 +29,23 @@ function parseList(value) {
   } catch {
     return String(value || '').split(',').map(s => s.trim()).filter(Boolean);
   }
+}
+
+function splitMultiline(value) {
+  return String(value || '')
+    .split(/\n+/)
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+function persistChatHistory() {
+  localStorage.setItem('mode_chat_history', JSON.stringify(state.chatHistory.slice(-20)));
+}
+
+function pushChatHistory(role, content) {
+  state.chatHistory.push({ role, content });
+  state.chatHistory = state.chatHistory.slice(-20);
+  persistChatHistory();
 }
 
 function renderStars(rating) {
@@ -120,6 +144,108 @@ function showToast(message, type = 'success') {
   el.textContent = message;
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 3200);
+}
+
+function markdownInline(text) {
+  const safeLinks = [];
+  let out = escapeHtml(String(text || ''));
+  out = out.replace(/```([^`]+)```/g, (_, code) => `<code>${code}</code>`);
+  out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
+  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+|\/[^\s)]*)\)/g, (_, label, href) => {
+    const id = safeLinks.push({ label, href }) - 1;
+    return `__LINK_${id}__`;
+  });
+  out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  out = out.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+  out = out.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
+  out = out.replace(/(?<!_)_([^_\n]+)_(?!_)/g, '<em>$1</em>');
+  out = out.replace(/__LINK_(\d+)__/g, (_, n) => {
+    const link = safeLinks[Number(n)];
+    return link ? `<a href="${escapeHtml(link.href)}" target="_blank" rel="noopener">${escapeHtml(link.label)}</a>` : '';
+  });
+  return out;
+}
+
+function markdownToHtml(md) {
+  const lines = String(md || '').replace(/\r\n/g, '\n').split('\n');
+  const blocks = [];
+  let i = 0;
+
+  const pushParagraph = (buffer) => {
+    const text = buffer.map(line => line.trim()).filter(Boolean).join(' ');
+    if (text) blocks.push(`<p>${markdownInline(text)}</p>`);
+  };
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      i += 1;
+      continue;
+    }
+
+    if (trimmed.startsWith('```')) {
+      const code = [];
+      i += 1;
+      while (i < lines.length && !lines[i].trim().startsWith('```')) {
+        code.push(lines[i]);
+        i += 1;
+      }
+      if (i < lines.length) i += 1;
+      blocks.push(`<pre><code>${escapeHtml(code.join('\n'))}</code></pre>`);
+      continue;
+    }
+
+    const heading = trimmed.match(/^(#{1,6})\s+(.*)$/);
+    if (heading) {
+      const level = heading[1].length;
+      blocks.push(`<h${level}>${markdownInline(heading[2])}</h${level}>`);
+      i += 1;
+      continue;
+    }
+
+    if (/^\|/.test(trimmed) && i + 1 < lines.length && /^\|?\s*:?[-]{3,}:?/.test(lines[i + 1].trim())) {
+      const rows = [];
+      while (i < lines.length && /^\|/.test(lines[i].trim())) {
+        rows.push(lines[i].trim());
+        i += 1;
+      }
+      const headCells = rows[0].split('|').map(c => c.trim()).filter(Boolean);
+      const bodyRows = rows.slice(2).map(row => row.split('|').map(c => c.trim()).filter(Boolean));
+      blocks.push(`<table><thead><tr>${headCells.map(cell => `<th>${markdownInline(cell)}</th>`).join('')}</tr></thead><tbody>${bodyRows.map(row => `<tr>${row.map(cell => `<td>${markdownInline(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table>`);
+      continue;
+    }
+
+    if (/^[-*+]\s+/.test(trimmed)) {
+      const items = [];
+      while (i < lines.length && /^[-*+]\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^[-*+]\s+/, ''));
+        i += 1;
+      }
+      blocks.push(`<ul>${items.map(item => `<li>${markdownInline(item)}</li>`).join('')}</ul>`);
+      continue;
+    }
+
+    if (/^\d+\.\s+/.test(trimmed)) {
+      const items = [];
+      while (i < lines.length && /^\d+\.\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^\d+\.\s+/, ''));
+        i += 1;
+      }
+      blocks.push(`<ol>${items.map(item => `<li>${markdownInline(item)}</li>`).join('')}</ol>`);
+      continue;
+    }
+
+    const paragraph = [];
+    while (i < lines.length && lines[i].trim() && !/^(#{1,6})\s+/.test(lines[i].trim()) && !/^```/.test(lines[i].trim()) && !/^\|/.test(lines[i].trim()) && !/^[-*+]\s+/.test(lines[i].trim()) && !/^\d+\.\s+/.test(lines[i].trim())) {
+      paragraph.push(lines[i]);
+      i += 1;
+    }
+    pushParagraph(paragraph);
+  }
+
+  return blocks.join('') || `<p>${escapeHtml(String(md || ''))}</p>`;
 }
 
 async function loadUser() {
@@ -223,7 +349,7 @@ function productCard(p) {
       <span class="brand">${escapeHtml(p.brand || '')}</span>
       <a href="/producto/${p.id}" data-nav class="productName">${escapeHtml(p.name)}</a>
       <div class="priceRow"><strong>${Number(p.price).toFixed(2)} €</strong>${p.compare_price ? `<span>${Number(p.compare_price).toFixed(2)} €</span>` : ''}</div>
-      <button class="btn btnSmall btnPrimary" onclick="quickAdd(${p.id})">Añadir</button>
+  <button class="btn btnSmall btnPrimary addToCartBtn" data-product-id="${p.id}" onclick="quickAdd(${p.id}, this)">Añadir</button>
     </div>
   </article>`;
 }
@@ -239,26 +365,51 @@ async function renderCatalog() {
     <section class="section pageSection">
       <h1 class="pageTitle">Catálogo MODE</h1>
       <div class="filtersBar">
-        <input class="searchInput" id="catalogSearch" placeholder="Buscar producto, marca..." value="${escapeHtml(qs.get('q') || '')}">
-        <select id="catalogCategory"><option value="">Todas las categorías</option>${state.categories.map(c => `<option value="${c.slug}" ${qs.get('categoria') === c.slug ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}</select>
-        <select id="catalogSort"><option value="newest">Novedades</option><option value="price_asc">Precio menor</option><option value="price_desc">Precio mayor</option><option value="rating">Mejor valorados</option></select>
-        <button class="btn btnSecondary" onclick="applyCatalogFilters()">Filtrar</button>
+        <input class="searchInput" id="catalogSearch" placeholder="Buscar producto, marca..." value="${escapeHtml(qs.get('q') || '')}" oninput="scheduleCatalogFilters()">
+        <select id="catalogCategory" onchange="scheduleCatalogFilters()"><option value="">Todas las categorías</option>${state.categories.map(c => `<option value="${c.slug}" ${qs.get('categoria') === c.slug ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}</select>
+        <select id="catalogSort" onchange="scheduleCatalogFilters()"><option value="newest">Novedades</option><option value="price_asc">Precio menor</option><option value="price_desc">Precio mayor</option><option value="rating">Mejor valorados</option></select>
+        <button class="btn btnSecondary" onclick="updateCatalogResults()">Filtrar</button>
       </div>
-      <div class="productGrid">${data.items.map(productCard).join('')}</div>
-      ${!data.items.length ? '<div class="emptyState"><strong>Sin productos</strong><p>Prueba otros filtros.</p></div>' : ''}
+      <div class="productGrid" id="catalogGrid">${data.items.map(productCard).join('')}</div>
+      <div class="emptyState" id="catalogEmpty" style="${data.items.length ? 'display:none' : ''}"><strong>Sin productos</strong><p>Prueba otros filtros.</p></div>
   </section>`;
   document.getElementById('catalogSort').value = qs.get('orden') || 'newest';
 }
 
-function applyCatalogFilters() {
-  const q = document.getElementById('catalogSearch').value.trim();
-  const categoria = document.getElementById('catalogCategory').value;
-  const orden = document.getElementById('catalogSort').value;
+async function updateCatalogResults() {
+  const searchEl = document.getElementById('catalogSearch');
+  const categoryEl = document.getElementById('catalogCategory');
+  const sortEl = document.getElementById('catalogSort');
+  if (!searchEl || !categoryEl || !sortEl) return;
+  const q = searchEl.value.trim();
+  const categoria = categoryEl.value;
+  const orden = sortEl.value;
   const params = new URLSearchParams();
   if (q) params.set('q', q);
   if (categoria) params.set('categoria', categoria);
   if (orden) params.set('orden', orden);
-  navigate(`/catalogo?${params.toString()}`);
+  const path = `/catalogo${params.toString() ? `?${params.toString()}` : ''}`;
+  history.replaceState({}, '', path);
+  const reqId = ++state.catalogRequestId;
+  const apiParams = new URLSearchParams({ sort: orden || 'newest', per_page: '100' });
+  if (q) apiParams.set('q', q);
+  if (categoria) apiParams.set('category', categoria);
+  const data = await api(`/api/products?${apiParams.toString()}`).catch(() => ({ items: [] }));
+  if (reqId !== state.catalogRequestId) return;
+  const grid = document.getElementById('catalogGrid');
+  const empty = document.getElementById('catalogEmpty');
+  if (grid) grid.innerHTML = data.items.map(productCard).join('');
+  if (empty) empty.style.display = data.items.length ? 'none' : '';
+}
+
+function applyCatalogFilters() {
+  updateCatalogResults();
+}
+
+let catalogSearchTimer = null;
+function scheduleCatalogFilters() {
+  clearTimeout(catalogSearchTimer);
+  catalogSearchTimer = setTimeout(updateCatalogResults, 250);
 }
 
 async function renderProduct() {
@@ -268,6 +419,7 @@ async function renderProduct() {
   const colors = parseList(p.colors);
   const tags = parseList(p.tags);
   const extraImages = parseList(p.images);
+  const characteristics = splitMultiline(p.characteristics);
   const allImages = [p.image || '/assets/uploads/site/hero.jpg', ...extraImages].filter(Boolean).filter((img, i, arr) => arr.indexOf(img) === i);
   const showRail = allImages.length > 1;
   const hasDiscount = p.compare_price && Number(p.compare_price) > Number(p.price);
@@ -339,16 +491,18 @@ async function renderProduct() {
           </div>
           <div class="pdCollapsible">
             <button class="pdCollapsibleBtn" onclick="toggleCollapsible(this)">Composición y cuidados <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
-            <div class="pdCollapsibleBody"><p>Tejido de alta calidad. Consulta la etiqueta del producto para instrucciones detalladas de lavado y cuidado.</p></div>
+            <div class="pdCollapsibleBody"><p>${escapeHtml(p.composition_care || 'Tejido de alta calidad. Consulta la etiqueta del producto para instrucciones detalladas de lavado y cuidado.')}</p></div>
           </div>
           <div class="pdCollapsible">
             <button class="pdCollapsibleBtn" onclick="toggleCollapsible(this)">Características <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></button>
             <div class="pdCollapsibleBody">
               <ul>
-                <li>Marca: ${escapeHtml(p.brand || 'MODE')}</li>
-                <li>Categoría: ${escapeHtml(p.category_name || 'General')}</li>
-                ${p.gender ? '<li>Género: ' + escapeHtml(p.gender) + '</li>' : ''}
-                ${tags.length ? '<li>Tags: ' + tags.map(t => escapeHtml(t)).join(', ') + '</li>' : ''}
+                ${(characteristics.length ? characteristics : [
+                  `Marca: ${p.brand || 'MODE'}`,
+                  `Categoría: ${p.category_name || 'General'}`,
+                  ...(p.gender ? [`Género: ${p.gender}`] : []),
+                  ...(tags.length ? [`Tags: ${tags.join(', ')}`] : []),
+                ]).map(item => `<li>${escapeHtml(item)}</li>`).join('')}
               </ul>
             </div>
           </div>
@@ -358,7 +512,7 @@ async function renderProduct() {
   </section>`;
 }
 
-async function quickAdd(id) {
+async function quickAdd(id, btn) {
   if (!state.token) return navigate('/login');
   const p = await api(`/api/products/${id}`);
   const size = parseList(p.sizes)[0] || '';
@@ -366,6 +520,20 @@ async function quickAdd(id) {
   state.cart = await api('/api/cart', { method: 'POST', body: JSON.stringify({ product_id: id, quantity: 1, size, color }) });
   updateNav();
   showToast('Producto añadido al carrito');
+  if (btn) {
+    btn.classList.remove('addedConfirm', 'addedPulse');
+    void btn.offsetWidth;
+    btn.classList.add('addedConfirm', 'addedPulse');
+    btn.disabled = true;
+    const originalHtml = btn.dataset.originalHtml || btn.innerHTML;
+    btn.dataset.originalHtml = originalHtml;
+    btn.innerHTML = `<svg class="addToCartTick" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>`;
+    setTimeout(() => {
+      btn.classList.remove('addedConfirm', 'addedPulse');
+      btn.disabled = false;
+      btn.innerHTML = btn.dataset.originalHtml || 'Añadir';
+    }, 1200);
+  }
 }
 
 async function addProduct(id) {
@@ -510,10 +678,13 @@ function statusLabel(s) { return ({ pending: 'Pendiente', paid: 'Pagado', shippe
 async function renderAdmin() {
   if (state.user?.role !== 'admin') return navigate('/');
   const dashboard = await api('/api/admin/dashboard');
+  state.adminDashboard = dashboard;
   appEl.innerHTML = `<section class="adminPage"><h1 class="pageTitle">Panel de administración</h1>
     <div class="adminTabs">
       ${['dashboard', 'products', 'orders', 'customers', 'carts', 'import'].map((tab, i) => `<button class="adminTab ${i === 0 ? 'active' : ''}" onclick="switchAdminTab(this,'${tab}')">${({ dashboard: 'Dashboard', products: 'Productos', orders: 'Pedidos', customers: 'Clientes', carts: 'Carritos', import: 'Importar Excel' })[tab]}</button>`).join('')}
-    </div><div id="adminContent">${renderDashboardHTML(dashboard)}</div></section>`;
+      <button class="btn btnSecondary adminStatsBtn" onclick="openStatsModal()"><span>📊</span> Estadisticas</button>
+      <button class="btn btnSecondary adminAiBtn" onclick="openAdminAiAnalysis()">Analisis con IA</button>
+    </div><div id="adminContent">${renderDashboardHTML(dashboard)}</div>${renderStatsModalHTML(dashboard)}</section>`;
 }
 
 function switchAdminTab(el, tab) {
@@ -538,12 +709,94 @@ function renderDashboardHTML(d) {
 function kpi(label, value) { return `<div class="kpiCard"><div class="kpiValue">${value}</div><div class="kpiLabel">${label}</div></div>`; }
 function bar(label, value, max, raw = value) { return `<div class="chartBarRow"><span class="chartBarLabel">${escapeHtml(label)}</span><div class="chartBarTrack"><div class="chartBarFill" style="width:${Math.max(6, Number(raw) / max * 100)}%"></div></div><span class="chartBarValue">${value}</span></div>`; }
 
+function renderStatsModalHTML(d) {
+  return `<div class="adminModalOverlay statsModalOverlay" id="statsModal" style="display:none" onclick="if(event.target.id==='statsModal') closeStatsModal()">
+    <div class="adminModal statsModal" onclick="event.stopPropagation()">
+      <div class="adminModalHeader statsModalHeader">
+        <div><h3>Estadisticas</h3><p>Vista rápida de pedidos, ingresos y catálogo.</p></div>
+        <button onclick="closeStatsModal()">×</button>
+      </div>
+      <div class="statsGrid">
+        <section class="statsCard"><h4>Barra</h4>${renderBarsSvg(d)}</section>
+        <section class="statsCard"><h4>Circular</h4>${renderPieSvg(d)}</section>
+        <section class="statsCard"><h4>Lineal</h4>${renderLineSvg(d)}</section>
+      </div>
+      <div class="statsLegend">
+        <div><strong>Ingresos</strong><span>${Number(d.total_revenue).toFixed(2)} €</span></div>
+        <div><strong>Pedidos</strong><span>${d.total_orders}</span></div>
+        <div><strong>Clientes</strong><span>${d.total_customers}</span></div>
+        <div><strong>Productos activos</strong><span>${d.active_products}</span></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function openStatsModal() { const el = document.getElementById('statsModal'); if (el) el.style.display = 'flex'; }
+function closeStatsModal() { const el = document.getElementById('statsModal'); if (el) el.style.display = 'none'; }
+
+function renderBarsSvg(d) {
+  const items = Object.entries(d.orders_count_by_status || {}).map(([k, v]) => ({ label: statusLabel(k), value: Number(v) }));
+  const max = Math.max(...items.map(i => i.value), 1);
+  const barW = 52;
+  const gap = 18;
+  const width = Math.max(320, items.length * (barW + gap) + 50);
+  const height = 240;
+  const baseY = 185;
+  const bars = items.map((item, i) => {
+    const h = Math.max(8, (item.value / max) * 120);
+    const x = 30 + i * (barW + gap);
+    const y = baseY - h;
+    return `<g><rect x="${x}" y="${y}" width="${barW}" height="${h}" rx="10" fill="#b12b2f" opacity="${0.55 + (item.value / max) * 0.45}"></rect><text x="${x + barW / 2}" y="${y - 8}" text-anchor="middle" font-size="12" font-weight="700" fill="#171717">${item.value}</text><text x="${x + barW / 2}" y="210" text-anchor="middle" font-size="11" fill="#4b4b4f">${escapeHtml(item.label)}</text></g>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${width} ${height}" class="statsSvg">${bars}<line x1="20" y1="185" x2="${width - 20}" y2="185" stroke="#d9d0c5" stroke-width="2"/></svg>`;
+}
+
+function renderPieSvg(d) {
+  const entries = Object.entries(d.revenue_by_status || {});
+  const total = entries.reduce((s, [, v]) => s + Number(v || 0), 0) || 1;
+  const colors = ['#b12b2f', '#1a56db', '#1d7f55', '#b88a44', '#77777d'];
+  let acc = 0;
+  const cx = 120, cy = 120, r = 78;
+  const parts = entries.map(([k, v], i) => {
+    const value = Number(v || 0);
+    const angle = (value / total) * Math.PI * 2;
+    const start = acc;
+    const end = acc + angle;
+    acc = end;
+    const x1 = cx + r * Math.cos(start);
+    const y1 = cy + r * Math.sin(start);
+    const x2 = cx + r * Math.cos(end);
+    const y2 = cy + r * Math.sin(end);
+    const large = angle > Math.PI ? 1 : 0;
+    return `<path d="M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z" fill="${colors[i % colors.length]}"></path>`;
+  }).join('');
+  const legend = entries.map(([k, v], i) => `<div class="pieLegendItem"><span style="background:${colors[i % colors.length]}"></span>${escapeHtml(statusLabel(k))}: ${Number(v).toFixed(0)} €</div>`).join('');
+  return `<div class="pieWrap"><svg viewBox="0 0 240 240" class="statsSvg pieSvg">${parts}<circle cx="120" cy="120" r="38" fill="white"></circle><text x="120" y="118" text-anchor="middle" font-size="16" font-weight="900" fill="#171717">${Number(d.total_revenue).toFixed(0)}€</text><text x="120" y="136" text-anchor="middle" font-size="11" fill="#77777d">Ingresos</text></svg><div class="pieLegend">${legend || '<p>Sin datos</p>'}</div></div>`;
+}
+
+function renderLineSvg(d) {
+  const points = [
+    ['Pedidos', Number(d.total_orders || 0)],
+    ['Clientes', Number(d.total_customers || 0)],
+    ['Productos', Number(d.active_products || 0)],
+    ['Carritos', Number(d.cart_item_count || 0)],
+    ['Ingresos', Number(d.total_revenue || 0) / 10],
+  ];
+  const max = Math.max(...points.map(([, v]) => v), 1);
+  const w = 460, h = 230, padX = 30, padY = 25;
+  const innerW = w - padX * 2, innerH = h - padY * 2;
+  const coords = points.map(([, v], i) => ({ x: padX + (innerW / (points.length - 1)) * i, y: padY + (1 - v / max) * innerH, label: points[i][0], value: v }));
+  const path = coords.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${p.y}`).join(' ');
+  const area = `${path} L ${padX + innerW} ${h - padY} L ${padX} ${h - padY} Z`;
+  return `<svg viewBox="0 0 ${w} ${h}" class="statsSvg"><path d="${area}" fill="rgba(177,43,47,.08)"></path><path d="${path}" fill="none" stroke="#b12b2f" stroke-width="3"></path>${coords.map(p => `<circle cx="${p.x}" cy="${p.y}" r="5" fill="#fff" stroke="#b12b2f" stroke-width="3"></circle><text x="${p.x}" y="${h - 8}" text-anchor="middle" font-size="11" fill="#4b4b4f">${escapeHtml(p.label)}</text>`).join('')}</svg>`;
+}
+
 function renderAdminProductsHTML(products) {
   return `<div class="adminToolbar"><input class="adminSearchInput" id="adminProdSearch" placeholder="Buscar..." oninput="filterAdminProducts()"><button class="btn btnPrimary" onclick="adminShowProductModal()">+ Añadir producto</button></div><div id="adminProductsTable">${adminProductsTable(products)}</div><div class="adminModalOverlay" id="adminProductModal" style="display:none"><div class="adminModal"><div class="adminModalHeader"><h3 id="adminModalTitle">Producto</h3><button onclick="adminCloseProductModal()">×</button></div><div class="adminModalBody" id="adminProductForm"></div></div></div>`;
 }
 function adminProductsTable(products) {
   window._adminProducts = products;
-  return `<div class="tableWrap"><table class="adminTable"><thead><tr><th>ID</th><th>Imagen</th><th>Producto</th><th>Marca</th><th>Precio</th><th>Stock</th><th>Activo</th><th>Acciones</th></tr></thead><tbody>${products.map(p => `<tr data-text="${escapeHtml(`${p.name} ${p.brand}`.toLowerCase())}"><td>${p.id}</td><td><img class="adminThumb" src="${escapeHtml(p.image || '')}" alt=""></td><td><strong>${escapeHtml(p.name)}</strong><br><small>${escapeHtml(p.category_name || '')}</small></td><td>${escapeHtml(p.brand)}</td><td>${Number(p.price).toFixed(2)} €</td><td>${p.stock}</td><td>${p.active ? 'Sí' : 'No'}</td><td><button class="btnTiny" onclick="adminEditProduct(${p.id})">Editar</button><button class="btnTiny" onclick="adminToggleProduct(${p.id}, ${p.active ? 0 : 1})">${p.active ? 'Ocultar' : 'Activar'}</button><button class="btnTiny danger" onclick="adminDeleteProduct(${p.id})">Eliminar</button></td></tr>`).join('')}</tbody></table></div>`;
+   return `<div class="tableWrap"><table class="adminTable"><thead><tr><th>ID</th><th>Imagen</th><th>Producto</th><th>Marca</th><th>Precio</th><th>Stock</th><th>Activo</th><th>Acciones</th></tr></thead><tbody>${products.map(p => `<tr data-product-id="${p.id}" data-active="${p.active ? 1 : 0}" data-text="${escapeHtml(`${p.name} ${p.brand}`.toLowerCase())}"><td>${p.id}</td><td><img class="adminThumb" src="${escapeHtml(p.image || '')}" alt=""></td><td><strong>${escapeHtml(p.name)}</strong><br><small>${escapeHtml(p.category_name || '')}</small></td><td>${escapeHtml(p.brand)}</td><td>${Number(p.price).toFixed(2)} €</td><td>${p.stock}</td><td>${p.active ? 'Sí' : 'No'}</td><td><button class="btnTiny" onclick="adminEditProduct(${p.id})">Editar</button><button class="btnTiny" onclick="adminToggleProduct(${p.id}, ${p.active ? 0 : 1})">${p.active ? 'Ocultar' : 'Activar'}</button><button class="btnTiny danger" onclick="adminDeleteProduct(${p.id})">Eliminar</button></td></tr>`).join('')}</tbody></table></div>`;
 }
 function filterAdminProducts() {
   const q = document.getElementById('adminProdSearch').value.toLowerCase();
@@ -557,20 +810,36 @@ function adminShowProductModal(product = null) {
   const colors = product ? parseList(product.colors).join(', ') : '';
   const tags = product ? parseList(product.tags).join(', ') : '';
   document.getElementById('adminProductForm').innerHTML = `<div class="adminFormGrid">
-    <div class="formGroup"><label>Nombre *</label><input id="pf-name" value="${escapeHtml(product?.name || '')}"></div>
-    <div class="formGroup"><label>Marca</label><input id="pf-brand" value="${escapeHtml(product?.brand || '')}"></div>
+    <div class="formGroup"><label>Nombre *</label><input id="pf-name" value="${escapeHtml(product?.name || '')}" oninput="adminUpdateAiHint()"></div>
+    <div class="formGroup"><label>Marca</label><input id="pf-brand" value="${escapeHtml(product?.brand || '')}" oninput="adminUpdateAiHint()"></div>
     <div class="formGroup"><label>Precio *</label><input id="pf-price" type="number" step="0.01" value="${product?.price || ''}"></div>
     <div class="formGroup"><label>Precio anterior</label><input id="pf-compare" type="number" step="0.01" value="${product?.compare_price || ''}"></div>
     <div class="formGroup"><label>Stock</label><input id="pf-stock" type="number" value="${product?.stock ?? 0}"></div>
-    <div class="formGroup"><label>Categoría</label><select id="pf-category">${state.categories.map(c => `<option value="${c.id}" ${product?.category_id === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}</select></div>
+    <div class="formGroup"><label>Categoría</label><select id="pf-category" onchange="adminUpdateAiHint()">${state.categories.map(c => `<option value="${c.id}" ${product?.category_id === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}</select></div>
   </div>
   <div class="formGroup"><label>Descripción</label><textarea id="pf-desc">${escapeHtml(product?.description || '')}</textarea></div>
+  <div class="adminAiActions"><button class="btn btnSecondary" type="button" onclick="adminGenerateProductAi(${product?.id || 0})">Crear con IA</button><small id="pf-ai-hint">Rellena primero nombre, marca y categoría.</small></div>
+  <div class="formGroup"><label>Características</label><textarea id="pf-characteristics" placeholder="Marca:...\nCategoría:...\nGénero:...\nTags:...">${escapeHtml(product?.characteristics || '')}</textarea></div>
+  <div class="formGroup"><label>Composición y cuidados</label><textarea id="pf-composition" placeholder="Tejido...\nCuidado...">${escapeHtml(product?.composition_care || '')}</textarea></div>
   <div class="formGroup"><label>Imagen local del producto</label><div class="imageUploadBox">${product?.image ? `<img id="pf-image-preview" src="${escapeHtml(product.image)}" alt="Preview">` : '<img id="pf-image-preview" style="display:none" alt="Preview">'}<div><input id="pf-image-file" type="file" accept="image/jpeg,image/png,image/webp,image/avif,image/gif" onchange="adminPreviewImage(this)"><small>JPG, PNG, WebP, AVIF o GIF. Se guarda en local.</small><div id="pf-image-status"></div></div></div><input type="hidden" id="pf-image" value="${escapeHtml(product?.image || '')}"></div>
   <div class="adminFormGrid"><div class="formGroup"><label>Tallas</label><input id="pf-sizes" value="${escapeHtml(sizes)}"></div><div class="formGroup"><label>Colores</label><input id="pf-colors" value="${escapeHtml(colors)}"></div><div class="formGroup"><label>Tags</label><input id="pf-tags" value="${escapeHtml(tags)}"></div><div class="formGroup"><label>Género</label><select id="pf-gender">${['unisex','hombre','mujer'].map(g => `<option ${product?.gender === g ? 'selected' : ''}>${g}</option>`).join('')}</select></div></div>
   <div class="checkRow"><label><input id="pf-active" type="checkbox" ${!product || product.active ? 'checked' : ''}> Activo</label><label><input id="pf-featured" type="checkbox" ${product?.featured ? 'checked' : ''}> Destacado</label><label><input id="pf-sale" type="checkbox" ${product?.on_sale ? 'checked' : ''}> Oferta</label></div>
   <div class="modalActions"><button class="btn btnSecondary" onclick="adminCloseProductModal()">Cancelar</button><button class="btn btnPrimary" onclick="adminSaveProduct(${product?.id || 0})">${product ? 'Guardar cambios' : 'Crear producto'}</button></div>`;
+  adminUpdateAiHint();
 }
 function adminCloseProductModal() { document.getElementById('adminProductModal').style.display = 'none'; }
+function adminUpdateAiHint() {
+  const hint = document.getElementById('pf-ai-hint');
+  if (!hint) return;
+  const name = document.getElementById('pf-name')?.value.trim();
+  const brand = document.getElementById('pf-brand')?.value.trim();
+  const category_id = Number(document.getElementById('pf-category')?.value);
+  if (!name || !brand || !category_id) {
+    hint.textContent = 'Rellena primero nombre, marca y categoría.';
+  } else if (hint.textContent === 'Rellena primero nombre, marca y categoría.') {
+    hint.textContent = '';
+  }
+}
 function adminPreviewImage(input) {
   const preview = document.getElementById('pf-image-preview');
   if (!input.files?.length) return;
@@ -597,6 +866,8 @@ async function adminSaveProduct(id) {
     brand: document.getElementById('pf-brand').value.trim(),
     category_id: Number(document.getElementById('pf-category').value),
     description: document.getElementById('pf-desc').value.trim(),
+    characteristics: document.getElementById('pf-characteristics').value.trim(),
+    composition_care: document.getElementById('pf-composition').value.trim(),
     price: Number(document.getElementById('pf-price').value),
     compare_price: Number(document.getElementById('pf-compare').value) || null,
     image,
@@ -617,7 +888,109 @@ async function adminSaveProduct(id) {
   switchAdminTab(document.querySelector('.adminTab:nth-child(2)'), 'products');
 }
 async function adminEditProduct(id) { adminShowProductModal(await api(`/api/admin/product/${id}`)); }
-async function adminToggleProduct(id, active) { await api(`/api/admin/products/${id}/quick`, { method: 'PATCH', body: JSON.stringify({ active: !!active }) }); switchAdminTab(document.querySelector('.adminTab:nth-child(2)'), 'products'); }
+async function adminGenerateProductAi(id) {
+  const name = document.getElementById('pf-name').value.trim();
+  const brand = document.getElementById('pf-brand').value.trim();
+  const category_id = Number(document.getElementById('pf-category').value);
+  const price = Number(document.getElementById('pf-price').value);
+  const description = document.getElementById('pf-desc').value.trim();
+  const tags = document.getElementById('pf-tags').value.trim();
+  const gender = document.getElementById('pf-gender').value;
+  const hint = document.getElementById('pf-ai-hint');
+  if (!name || !brand || !category_id) {
+    if (hint) hint.textContent = 'Rellena primero nombre, marca y categoría.';
+    return showToast('Rellena nombre, marca y categoría antes de usar IA', 'error');
+  }
+  if (hint) hint.textContent = 'Generando descripción con IA';
+  const btn = document.querySelector('.adminAiActions button');
+  if (btn) btn.disabled = true;
+  try {
+    const data = await api('/api/admin/products/ai-copy', {
+      method: 'POST',
+      body: JSON.stringify({ name, brand, category_id, price, description, tags, gender, characteristics: '', composition_care: '' }),
+    });
+    await animateProductAiFields({
+      description: data.description || '',
+      characteristics: data.characteristics || '',
+      composition_care: data.composition_care || '',
+    });
+    showToast('Texto generado con IA');
+  } catch (e) {
+    showToast(e.message || 'No se pudo generar el texto', 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+    if (hint) {
+      const currentName = document.getElementById('pf-name')?.value.trim();
+      const currentBrand = document.getElementById('pf-brand')?.value.trim();
+      const currentCategory = Number(document.getElementById('pf-category')?.value);
+      hint.textContent = (currentName && currentBrand && currentCategory) ? '' : 'Rellena primero nombre, marca y categoría.';
+    }
+  }
+}
+
+async function animateProductAiFields(copy) {
+  const descEl = document.getElementById('pf-desc');
+  const charEl = document.getElementById('pf-characteristics');
+  const compEl = document.getElementById('pf-composition');
+  if (!descEl || !charEl || !compEl) return;
+  await typeTextareaWords(descEl, copy.description);
+  await pause(120);
+  await typeTextareaWords(charEl, copy.characteristics);
+  await pause(120);
+  await typeTextareaWords(compEl, copy.composition_care);
+}
+
+function pause(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+function typeTextareaWords(el, text) {
+  return new Promise(resolve => {
+    const tokens = String(text || '').match(/\s+|\S+/g) || [];
+    el.value = '';
+    if (!tokens.length) return resolve();
+    let raw = '';
+    let i = 0;
+    const timer = setInterval(() => {
+      raw += tokens[i];
+      el.value = raw;
+      el.scrollTop = el.scrollHeight;
+      i += 1;
+      if (i >= tokens.length) {
+        clearInterval(timer);
+        resolve();
+      }
+    }, 18);
+  });
+}
+async function adminToggleProduct(id, active) {
+  const nextActive = !!active;
+  const row = document.querySelector(`#adminProductsTable tbody tr[data-product-id="${id}"]`);
+  const activeCell = row?.children?.[6];
+  const actionBtn = row?.querySelectorAll('button.btnTiny')?.[1];
+  const product = window._adminProducts?.find(p => Number(p.id) === Number(id));
+  const prevActive = product?.active;
+
+  if (row) row.dataset.active = nextActive ? '1' : '0';
+  if (activeCell) activeCell.textContent = nextActive ? 'Sí' : 'No';
+  if (actionBtn) {
+    actionBtn.textContent = nextActive ? 'Ocultar' : 'Activar';
+    actionBtn.setAttribute('onclick', `adminToggleProduct(${id}, ${nextActive ? 0 : 1})`);
+  }
+  if (product) product.active = nextActive;
+
+  try {
+    await api(`/api/admin/products/${id}/quick`, { method: 'PATCH', body: JSON.stringify({ active: nextActive }) });
+    showToast(nextActive ? 'Producto activado' : 'Producto ocultado');
+  } catch (e) {
+    if (product) product.active = prevActive;
+    if (row) row.dataset.active = prevActive ? '1' : '0';
+    if (activeCell) activeCell.textContent = prevActive ? 'Sí' : 'No';
+    if (actionBtn) {
+      actionBtn.textContent = prevActive ? 'Ocultar' : 'Activar';
+      actionBtn.setAttribute('onclick', `adminToggleProduct(${id}, ${prevActive ? 0 : 1})`);
+    }
+    showToast(e.message || 'Error al actualizar producto', 'error');
+  }
+}
 async function adminDeleteProduct(id) { if (!confirm('¿Eliminar producto? Si tiene histórico se desactivará.')) return; const r = await api(`/api/products/${id}`, { method: 'DELETE' }); showToast(r.deactivated ? 'Producto desactivado por tener histórico' : 'Producto eliminado'); switchAdminTab(document.querySelector('.adminTab:nth-child(2)'), 'products'); }
 
 function renderAdminOrdersHTML(orders) {
@@ -626,26 +999,166 @@ function renderAdminOrdersHTML(orders) {
 async function adminUpdateOrderStatus(id, status) { await api(`/api/admin/orders/${id}/status?status=${status}`, { method: 'PATCH' }); showToast('Pedido actualizado'); }
 function renderCustomersHTML(rows) { return `<div class="tableWrap"><table class="adminTable"><thead><tr><th>Cliente</th><th>Email</th><th>Pedidos</th><th>Gastado</th><th>Carrito</th></tr></thead><tbody>${rows.map(c => `<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.email)}</td><td>${c.order_count}</td><td>${Number(c.total_spent).toFixed(2)} €</td><td>${Number(c.cart_value).toFixed(2)} €</td></tr>`).join('')}</tbody></table></div>`; }
 function renderCartsHTML(rows) { return rows.length ? `<div class="tableWrap"><table class="adminTable"><thead><tr><th>Cliente</th><th>Email</th><th>Valor</th><th>Productos</th></tr></thead><tbody>${rows.map(c => `<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.email)}</td><td>${Number(c.cart_value).toFixed(2)} €</td><td>${c.items.map(i => `${escapeHtml(i.name)} x${i.quantity}`).join(', ')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="emptyState"><strong>Sin carritos guardados</strong></div>'; }
-function renderImportHTML() { return `<div class="importPanel"><h3>Importar productos desde Excel</h3><p>La columna image puede dejarse vacía; las imágenes se cargan desde el editor de producto.</p><div class="importActions"><a class="btn btnSecondary" href="/api/admin/products/import-template?token=${state.token}" download>Descargar plantilla</a><a class="btn btnSecondary" href="/api/admin/products/export-excel?token=${state.token}" download>Exportar catálogo</a></div><input id="excelFile" type="file" accept=".xlsx"><button class="btn btnPrimary" onclick="adminImportExcel()">Importar</button><div id="importResult"></div></div>`; }
+function renderImportHTML() { return `<div class="importPanel"><div class="importHeader"><div><span class="importKicker">Excel</span><h3>Importar productos desde Excel</h3><p>La columna image puede dejarse vacía; las imágenes se cargan desde el editor de producto.</p></div><div class="importPill">.xlsx</div></div><div class="importActions"><a class="btn btnSecondary" href="/api/admin/products/import-template?token=${state.token}" download>Descargar plantilla</a><a class="btn btnSecondary" href="/api/admin/products/export-excel?token=${state.token}" download>Exportar catálogo</a></div><label class="importDropzone" for="excelFile"><input id="excelFile" type="file" accept=".xlsx" onchange="adminExcelPicked(this)"><div class="importDropIcon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg></div><strong>Arrastra tu archivo .xlsx o haz clic para examinar</strong><span id="excelFileName">No se ha seleccionado ningún archivo</span><small>Sube un Excel con el catálogo y revisa el resultado en pantalla.</small></label><div class="importFooter"><button class="btn btnPrimary" onclick="adminImportExcel()">Importar</button><div id="importResult"></div></div></div>`; }
+function adminExcelPicked(input) { const el = document.getElementById('excelFileName'); if (el) el.textContent = input.files?.[0]?.name || 'No se ha seleccionado ningún archivo'; }
 async function adminImportExcel() { const f = document.getElementById('excelFile').files[0]; if (!f) return showToast('Selecciona un Excel', 'error'); const form = new FormData(); form.append('file', f); const res = await fetch(`/api/admin/products/import-excel?token=${state.token}`, { method: 'POST', body: form }); const data = await res.json(); document.getElementById('importResult').innerHTML = res.ok ? `<p>Creados: ${data.created}, actualizados: ${data.updated}, errores: ${data.errors.length}</p>` : `<p>${escapeHtml(data.detail || 'Error')}</p>`; }
 
 function toggleMenu() { document.querySelector('.nav').classList.toggle('open'); }
+function cancelChatRequest() {
+  state.chatAbortController?.abort();
+  state.chatAbortController = null;
+  clearInterval(state.chatTypingTimer);
+  state.chatTypingTimer = null;
+  state.chatTypingEl?.remove();
+  state.chatTypingEl = null;
+  if (state.chatStatusEl) state.chatStatusEl.style.display = 'none';
+}
+function setChatStatus(text = '') {
+  const el = document.getElementById('chatStatus');
+  state.chatStatusEl = el;
+  if (!el) return;
+  el.textContent = text;
+  el.style.display = text ? 'block' : 'none';
+}
 function closeAll() { if (state.chatOpen) toggleChat(); }
-function toggleChat() { state.chatOpen = !state.chatOpen; document.getElementById('chatBox').style.display = state.chatOpen ? 'flex' : 'none'; document.getElementById('overlay').style.display = state.chatOpen ? 'block' : 'none'; }
+function toggleChat() {
+  const closing = state.chatOpen;
+  state.chatOpen = !state.chatOpen;
+  if (closing) cancelChatRequest();
+  document.getElementById('chatBox').style.display = state.chatOpen ? 'flex' : 'none';
+  document.getElementById('overlay').style.display = state.chatOpen ? 'block' : 'none';
+}
 async function sendChat(e) {
   e.preventDefault();
   const input = document.getElementById('chatInput');
   const msg = input.value.trim();
   if (!msg) return;
   input.value = '';
-  const box = document.getElementById('chatMessages');
-  box.innerHTML += `<div class="chatMsg user">${escapeHtml(msg)}</div><div class="chatMsg bot typing">Pensando...</div>`;
-  const data = await api('/api/ai/chat', { method: 'POST', body: JSON.stringify({ message: msg, history: [] }) }).catch(() => ({ response: 'Ahora mismo no puedo responder. Prueba de nuevo.' }));
-  box.querySelector('.typing')?.remove();
-  box.innerHTML += `<div class="chatMsg bot">${escapeHtml(data.response)}</div>`;
-  box.scrollTop = box.scrollHeight;
+  await sendChatMessage(msg);
 }
-function logout() { localStorage.removeItem('mode_token'); state.token = ''; state.user = null; state.cart = []; navigate('/'); }
+
+async function sendChatMessage(msg) {
+  return sendChatMessageWithContext(msg, '', { showUserMessage: true, loadingText: 'Pensando...' });
+}
+
+async function sendChatMessageWithContext(msg, context, options = {}) {
+  const { showUserMessage = true, loadingText = 'Pensando...' } = options;
+  const box = document.getElementById('chatMessages');
+  cancelChatRequest();
+  const controller = new AbortController();
+  state.chatAbortController = controller;
+  try {
+    if (showUserMessage) {
+      box.innerHTML += `<div class="chatMsg user">${escapeHtml(msg)}</div><div class="chatMsg bot typing">Pensando...</div>`;
+      state.chatTypingEl = box.querySelector('.chatMsg.bot.typing');
+    } else {
+      setChatStatus(loadingText);
+    }
+    const data = await api('/api/ai/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: msg, history: state.chatHistory, context }),
+      signal: controller.signal,
+    });
+    if (controller.signal.aborted) return;
+    if (showUserMessage) {
+      const typingEl = state.chatTypingEl;
+      if (typingEl) {
+        typingEl.classList.remove('typing');
+        await revealChatResponse(typingEl, data.response || '', controller.signal);
+        box.scrollTop = box.scrollHeight;
+        pushChatHistory('user', msg);
+        pushChatHistory('assistant', data.response || '');
+      }
+    } else {
+      setChatStatus('');
+      box.innerHTML += `<div class="chatMsg bot typing"></div>`;
+      state.chatTypingEl = box.querySelector('.chatMsg.bot.typing');
+      const typingEl = state.chatTypingEl;
+      if (typingEl) {
+        typingEl.classList.remove('typing');
+        await revealChatResponse(typingEl, data.response || '', controller.signal);
+        box.scrollTop = box.scrollHeight;
+        pushChatHistory('user', msg);
+        pushChatHistory('assistant', data.response || '');
+      }
+    }
+  } catch (err) {
+    if (err?.name === 'AbortError') return;
+    setChatStatus('');
+    state.chatTypingEl?.remove();
+    state.chatTypingEl = null;
+    box.innerHTML += `<div class="chatMsg bot">Ahora mismo no puedo responder. Prueba de nuevo.</div>`;
+    box.scrollTop = box.scrollHeight;
+  } finally {
+    if (state.chatAbortController === controller) state.chatAbortController = null;
+    if (state.chatTypingEl && !state.chatTypingEl.isConnected) state.chatTypingEl = null;
+    setChatStatus('');
+  }
+}
+
+function revealChatResponse(el, text, signal) {
+  return new Promise(resolve => {
+    const tokens = String(text || '').match(/\s+|\S+/g) || [];
+    if (!tokens.length) {
+      el.textContent = '';
+      state.chatTypingEl = null;
+      resolve();
+      return;
+    }
+    el.textContent = '';
+    let raw = '';
+    let i = 0;
+    const tick = () => {
+      if (signal?.aborted) {
+        clearInterval(state.chatTypingTimer);
+        state.chatTypingTimer = null;
+        state.chatTypingEl = null;
+        resolve();
+        return;
+      }
+      raw += tokens[i];
+      el.innerHTML = markdownToHtml(raw);
+      el.closest('.chatMessages')?.scrollTo({ top: el.closest('.chatMessages').scrollHeight, behavior: 'smooth' });
+      i += 1;
+      if (i >= tokens.length) {
+        clearInterval(state.chatTypingTimer);
+        state.chatTypingTimer = null;
+        state.chatTypingEl = null;
+        resolve();
+      }
+  };
+    tick();
+    state.chatTypingTimer = setInterval(tick, 35);
+  });
+}
+
+function openAdminAiAnalysis() {
+  if (!state.user || state.user.role !== 'admin') return navigate('/login');
+  if (!state.chatOpen) toggleChat();
+  const box = document.getElementById('chatMessages');
+  if (box) box.innerHTML = '';
+  const d = state.adminDashboard;
+  const topSold = (d?.top_sold_products || []).slice(0, 5).map(p => `${p.product_name} (${p.total_qty})`).join(', ') || 'Sin datos';
+  const topCarted = (d?.most_carted_products || []).slice(0, 5).map(p => `${p.name} (${Number(p.cart_value).toFixed(2)} €)`).join(', ') || 'Sin datos';
+  const lowStock = (d?.low_stock_products || []).slice(0, 5).map(p => `${p.name} (${p.stock})`).join(', ') || 'Sin alertas';
+  const prompt = `Analiza la tienda MODE con estos datos del panel de administración y dame un resumen ejecutivo con hallazgos y acciones recomendadas.
+
+Datos:
+- Ingresos: ${Number(d?.total_revenue || 0).toFixed(2)} €
+- Pedidos: ${d?.total_orders ?? 0}
+- Clientes: ${d?.total_customers ?? 0}
+- Productos activos: ${d?.active_products ?? 0}
+- Valor carritos: ${Number(d?.cart_value || 0).toFixed(2)} €
+- Pedidos por estado: ${JSON.stringify(d?.orders_count_by_status || {})}
+- Más vendidos: ${topSold}
+- Más guardados en carrito: ${topCarted}
+- Stock bajo: ${lowStock}
+
+Quiero que te centres en clientes, productos, ventas, stock y oportunidades de mejora. Usa un tono claro y accionable.`;
+  document.getElementById('chatInput').value = '';
+  sendChatMessageWithContext('Analizame la tienda', prompt, { showUserMessage: false, loadingText: 'Cargando datos y preparando respuesta...' });
+}
+function logout() { cancelChatRequest(); localStorage.removeItem('mode_token'); localStorage.removeItem('mode_chat_history'); state.token = ''; state.user = null; state.cart = []; state.chatHistory = []; navigate('/'); }
 
 window.addEventListener('popstate', render);
 document.addEventListener('click', e => {
@@ -660,8 +1173,13 @@ document.addEventListener('click', e => {
   navigate(path);
 });
 document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    closeStatsModal();
+    return;
+  }
   if (e.key !== 'Enter' || e.target?.id !== 'catalogSearch') return;
   e.preventDefault();
-  applyCatalogFilters();
+  updateCatalogResults();
 });
 document.addEventListener('DOMContentLoaded', async () => { await loadUser(); await render(); });
+window.addEventListener('pagehide', cancelChatRequest);
