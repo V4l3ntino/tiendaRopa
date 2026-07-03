@@ -1,5 +1,5 @@
 const state = {
-  token: localStorage.getItem('mode_token') || '',
+  token: '',
   user: null,
   cart: [],
   categories: [],
@@ -10,8 +10,9 @@ const state = {
   chatTypingTimer: null,
   chatTypingEl: null,
   chatStatusEl: null,
+  chatBusy: false,
   adminDashboard: null,
-  chatHistory: (() => { try { const v = JSON.parse(localStorage.getItem('mode_chat_history') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } })(),
+  chatHistory: [],
 };
 
 const appEl = document.getElementById('app');
@@ -38,14 +39,10 @@ function splitMultiline(value) {
     .filter(Boolean);
 }
 
-function persistChatHistory() {
-  localStorage.setItem('mode_chat_history', JSON.stringify(state.chatHistory.slice(-20)));
-}
-
-function pushChatHistory(role, content) {
+async function pushChatHistory(role, content) {
   state.chatHistory.push({ role, content });
   state.chatHistory = state.chatHistory.slice(-20);
-  persistChatHistory();
+  await DemoStore?.setChatHistory?.(state.chatHistory);
 }
 
 function renderStars(rating) {
@@ -109,6 +106,7 @@ async function api(url, options = {}) {
   const headers = options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' };
   const sep = url.includes('?') ? '&' : '?';
   if (state.token && !url.includes('token=')) url += `${sep}token=${encodeURIComponent(state.token)}`;
+  if (window.DemoStore) return DemoStore.request(url, { ...options, headers: { ...headers, ...(options.headers || {}) } });
   const res = await fetch(url, { ...options, headers: { ...headers, ...(options.headers || {}) } });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: 'Error inesperado' }));
@@ -255,7 +253,7 @@ async function loadUser() {
   } catch {
     state.token = '';
     state.user = null;
-    localStorage.removeItem('mode_token');
+    await DemoStore?.clearSessionToken?.();
   }
 }
 
@@ -277,6 +275,14 @@ function updateNav() {
   const count = state.cart.reduce((sum, i) => sum + Number(i.quantity || 0), 0);
   badge.style.display = count ? '' : 'none';
   badge.textContent = count;
+  const route = getRoute();
+  document.querySelectorAll('.nav a[data-nav]').forEach(a => {
+    const href = a.getAttribute('href') || '';
+    const linkRoute = href === '/' ? 'home' : href.startsWith('/catalogo') ? 'catalog' : href === '/carrito' ? 'cart' : href === '/checkout' ? 'checkout' : href === '/login' ? 'login' : href === '/perfil' ? 'profile' : href === '/pedidos' ? 'orders' : href === '/admin' ? 'admin' : '';
+    const active = linkRoute === route || (route === 'product' && linkRoute === 'catalog');
+    a.classList.toggle('active', active);
+    if (active) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
 }
 
 async function render() {
@@ -655,7 +661,7 @@ function renderLogin() {
     const user = await api('/api/auth/login', { method: 'POST', body: JSON.stringify(data) });
     state.token = user.token;
     state.user = user;
-    localStorage.setItem('mode_token', user.token);
+    await DemoStore?.setSessionToken?.(user.token);
     showToast('Sesión iniciada');
     navigate(user.role === 'admin' ? '/admin' : '/catalogo');
   };
@@ -681,7 +687,7 @@ async function renderAdmin() {
   state.adminDashboard = dashboard;
   appEl.innerHTML = `<section class="adminPage"><h1 class="pageTitle">Panel de administración</h1>
     <div class="adminTabs">
-      ${['dashboard', 'products', 'orders', 'customers', 'carts', 'import'].map((tab, i) => `<button class="adminTab ${i === 0 ? 'active' : ''}" onclick="switchAdminTab(this,'${tab}')">${({ dashboard: 'Dashboard', products: 'Productos', orders: 'Pedidos', customers: 'Clientes', carts: 'Carritos', import: 'Importar Excel' })[tab]}</button>`).join('')}
+      ${['dashboard', 'products', 'orders', 'customers', 'carts', 'import'].map((tab, i) => `<button class="adminTab ${i === 0 ? 'active' : ''}" onclick="switchAdminTab(this,'${tab}')">${({ dashboard: 'Dashboard', products: 'Productos', orders: 'Pedidos', customers: 'Clientes', carts: 'Carritos', import: 'Datos demo' })[tab]}</button>`).join('')}
       <button class="btn btnSecondary adminStatsBtn" onclick="openStatsModal()"><span>📊</span> Estadisticas</button>
       <button class="btn btnSecondary adminAiBtn" onclick="openAdminAiAnalysis()">Analisis con IA</button>
     </div><div id="adminContent">${renderDashboardHTML(dashboard)}</div>${renderStatsModalHTML(dashboard)}</section>`;
@@ -850,9 +856,7 @@ function adminPreviewImage(input) {
 async function adminUploadImage(file) {
   const form = new FormData();
   form.append('file', file);
-  const res = await fetch(`/api/admin/uploads/product-image?token=${state.token}`, { method: 'POST', body: form });
-  if (!res.ok) throw new Error((await res.json()).detail || 'Error al subir imagen');
-  return res.json();
+  return api('/api/admin/uploads/product-image', { method: 'POST', body: form });
 }
 async function adminSaveProduct(id) {
   let image = document.getElementById('pf-image').value;
@@ -892,6 +896,7 @@ async function adminGenerateProductAi(id) {
   const name = document.getElementById('pf-name').value.trim();
   const brand = document.getElementById('pf-brand').value.trim();
   const category_id = Number(document.getElementById('pf-category').value);
+  const category_name = document.getElementById('pf-category').selectedOptions?.[0]?.textContent || '';
   const price = Number(document.getElementById('pf-price').value);
   const description = document.getElementById('pf-desc').value.trim();
   const tags = document.getElementById('pf-tags').value.trim();
@@ -905,10 +910,7 @@ async function adminGenerateProductAi(id) {
   const btn = document.querySelector('.adminAiActions button');
   if (btn) btn.disabled = true;
   try {
-    const data = await api('/api/admin/products/ai-copy', {
-      method: 'POST',
-      body: JSON.stringify({ name, brand, category_id, price, description, tags, gender, characteristics: '', composition_care: '' }),
-    });
+    const data = generateProductCopyLocal({ name, brand, category_name, price, description, tags, gender });
     await animateProductAiFields({
       description: data.description || '',
       characteristics: data.characteristics || '',
@@ -926,6 +928,44 @@ async function adminGenerateProductAi(id) {
       hint.textContent = (currentName && currentBrand && currentCategory) ? '' : 'Rellena primero nombre, marca y categoría.';
     }
   }
+}
+
+function generateProductCopyLocal({ name, brand, category_name, price, description, tags, gender }) {
+  const tagList = String(tags || '').split(',').map(s => s.trim()).filter(Boolean);
+  const isPremium = Number(price) >= 80;
+  const moodByCategory = {
+    'Chaquetas': ['protección ligera', 'versatilidad urbana', 'estilo premium'],
+    'Zapatos': ['comodidad diaria', 'agarre seguro', 'acabado limpio'],
+    'Pantalones': ['ajuste favorecedor', 'comodidad continua', 'libertad de movimiento'],
+    'Camisetas': ['suavidad', 'uso diario', 'fondo de armario'],
+    'Accesorios': ['toque final', 'uso diario', 'detalle funcional'],
+    'Vestidos': ['caída fluida', 'silencio visual', 'aire sofisticado'],
+    'Sudaderas': ['calidez', 'confort', 'look relajado'],
+  };
+  const moods = moodByCategory[category_name] || ['estilo actual', 'comodidad', 'uso versátil'];
+  const opener = isPremium ? 'Una pieza pensada para elevar cualquier look' : 'Una propuesta fácil de combinar para el día a día';
+  const styleHint = tagList.includes('nuevo') ? 'con un acabado actual y fresco' : tagList.includes('oferta') ? 'con una excelente relación entre estilo y precio' : 'con una presencia equilibrada';
+  const baseDescription = `${opener}, ${name.toLowerCase()} de ${brand} aporta ${moods[0]}, ${moods[1]} y ${styleHint}. Ideal para ${gender === 'mujer' ? 'looks femeninos' : gender === 'hombre' ? 'looks masculinos' : 'cualquier armario'} que buscan funcionalidad y estilo.`;
+  const characteristics = [
+    `Marca: ${brand}`,
+    `Categoría: ${category_name}`,
+    `Género: ${gender}`,
+    `Precio: ${Number(price).toFixed(2)} €`,
+    `Uso: ${moods[2]}`,
+    tagList.length ? `Tags: ${tagList.join(', ')}` : 'Tags: selección del catálogo',
+  ].join('\n');
+  const composition = category_name === 'Zapatos'
+    ? `Materiales seleccionados para ofrecer una pisada estable y un uso cómodo durante todo el día. Consulta la etiqueta del producto para recomendaciones de limpieza y conservación.`
+    : category_name === 'Chaquetas'
+      ? `Tejido pensado para ofrecer abrigo ligero y buen tacto. Se recomienda lavar siguiendo las indicaciones de la etiqueta para mantener su forma y acabado.`
+      : category_name === 'Vestidos'
+        ? `Tejido fluido y agradable al contacto con la piel. Para conservar el color y la caída, sigue las instrucciones de lavado de la etiqueta.`
+        : `Tejido cómodo y resistente para acompañar el uso diario. Consulta la etiqueta del producto para instrucciones de lavado y cuidado.`;
+  return {
+    description: description || baseDescription,
+    characteristics,
+    composition_care: composition,
+  };
 }
 
 async function animateProductAiFields(copy) {
@@ -999,9 +1039,12 @@ function renderAdminOrdersHTML(orders) {
 async function adminUpdateOrderStatus(id, status) { await api(`/api/admin/orders/${id}/status?status=${status}`, { method: 'PATCH' }); showToast('Pedido actualizado'); }
 function renderCustomersHTML(rows) { return `<div class="tableWrap"><table class="adminTable"><thead><tr><th>Cliente</th><th>Email</th><th>Pedidos</th><th>Gastado</th><th>Carrito</th></tr></thead><tbody>${rows.map(c => `<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.email)}</td><td>${c.order_count}</td><td>${Number(c.total_spent).toFixed(2)} €</td><td>${Number(c.cart_value).toFixed(2)} €</td></tr>`).join('')}</tbody></table></div>`; }
 function renderCartsHTML(rows) { return rows.length ? `<div class="tableWrap"><table class="adminTable"><thead><tr><th>Cliente</th><th>Email</th><th>Valor</th><th>Productos</th></tr></thead><tbody>${rows.map(c => `<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.email)}</td><td>${Number(c.cart_value).toFixed(2)} €</td><td>${c.items.map(i => `${escapeHtml(i.name)} x${i.quantity}`).join(', ')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="emptyState"><strong>Sin carritos guardados</strong></div>'; }
-function renderImportHTML() { return `<div class="importPanel"><div class="importHeader"><div><span class="importKicker">Excel</span><h3>Importar productos desde Excel</h3><p>La columna image puede dejarse vacía; las imágenes se cargan desde el editor de producto.</p></div><div class="importPill">.xlsx</div></div><div class="importActions"><a class="btn btnSecondary" href="/api/admin/products/import-template?token=${state.token}" download>Descargar plantilla</a><a class="btn btnSecondary" href="/api/admin/products/export-excel?token=${state.token}" download>Exportar catálogo</a></div><label class="importDropzone" for="excelFile"><input id="excelFile" type="file" accept=".xlsx" onchange="adminExcelPicked(this)"><div class="importDropIcon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg></div><strong>Arrastra tu archivo .xlsx o haz clic para examinar</strong><span id="excelFileName">No se ha seleccionado ningún archivo</span><small>Sube un Excel con el catálogo y revisa el resultado en pantalla.</small></label><div class="importFooter"><button class="btn btnPrimary" onclick="adminImportExcel()">Importar</button><div id="importResult"></div></div></div>`; }
-function adminExcelPicked(input) { const el = document.getElementById('excelFileName'); if (el) el.textContent = input.files?.[0]?.name || 'No se ha seleccionado ningún archivo'; }
-async function adminImportExcel() { const f = document.getElementById('excelFile').files[0]; if (!f) return showToast('Selecciona un Excel', 'error'); const form = new FormData(); form.append('file', f); const res = await fetch(`/api/admin/products/import-excel?token=${state.token}`, { method: 'POST', body: form }); const data = await res.json(); document.getElementById('importResult').innerHTML = res.ok ? `<p>Creados: ${data.created}, actualizados: ${data.updated}, errores: ${data.errors.length}</p>` : `<p>${escapeHtml(data.detail || 'Error')}</p>`; }
+function renderImportHTML() { return `<div class="importPanel"><div class="importHeader"><div><span class="importKicker">Demo local</span><h3>Respaldo y reinicio de datos</h3><p>Todo el catálogo, clientes, pedidos, carrito y métricas se guardan en este navegador. Puedes exportar una copia, restaurarla o volver al seed inicial.</p></div><div class="importPill">IndexedDB</div></div><div class="importActions"><button class="btn btnSecondary" onclick="exportDemoBackup()">Exportar backup</button><button class="btn btnSecondary" onclick="document.getElementById('demoBackupFile').click()">Restaurar backup</button><button class="btn btnSecondary danger" onclick="resetDemoData()">Reset demo</button></div><label class="importDropzone" for="demoBackupFile"><input id="demoBackupFile" type="file" accept="application/json" onchange="importDemoBackup(this)"><div class="importDropIcon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg></div><strong>Arrastra tu backup JSON o haz clic para examinar</strong><span id="demoBackupName">No se ha seleccionado ningún archivo</span><small>Sirve para guardar o restaurar la demo de este navegador sin depender del servidor.</small></label><div class="importFooter"><div id="importResult"></div></div></div>`; }
+function adminExcelPicked(input) { return importDemoBackup(input); }
+async function exportDemoBackup() { const json = await DemoStore.exportBackup(); const blob = new Blob([json], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `mode-demo-backup-${new Date().toISOString().slice(0,10)}.json`; a.click(); URL.revokeObjectURL(url); showToast('Backup exportado'); }
+async function importDemoBackup(input) { const f = input.files?.[0]; const nameEl = document.getElementById('demoBackupName'); if (nameEl) nameEl.textContent = f?.name || 'No se ha seleccionado ningún archivo'; if (!f) return; const text = await f.text(); try { const data = await DemoStore.importBackup(text); document.getElementById('importResult').innerHTML = `<p>Backup restaurado. Productos: ${data.products.length}, pedidos: ${data.orders.length}, clientes: ${data.users.filter(u => u.role === 'user').length}</p>`; showToast('Backup restaurado'); state.categories = data.categories || []; state.cart = []; state.token = data.sessionToken || ''; state.chatHistory = data.chatHistory || []; state.user = state.token ? await api('/api/auth/me').catch(() => null) : null; await render(); } catch (e) { document.getElementById('importResult').innerHTML = `<p>${escapeHtml(e.message || 'No se pudo restaurar')}</p>`; showToast(e.message || 'No se pudo restaurar', 'error'); } finally { input.value = ''; }
+}
+async function resetDemoData() { if (!confirm('¿Reiniciar la demo? Se perderán los datos actuales de este navegador.')) return; const data = await DemoStore.reset(); state.token = ''; state.user = null; state.cart = []; state.chatHistory = []; await DemoStore.clearSessionToken(); await DemoStore.setChatHistory([]); state.categories = data.categories || []; showToast('Demo reiniciada'); await render(); }
 
 function toggleMenu() { document.querySelector('.nav').classList.toggle('open'); }
 function cancelChatRequest() {
@@ -1012,6 +1055,17 @@ function cancelChatRequest() {
   state.chatTypingEl?.remove();
   state.chatTypingEl = null;
   if (state.chatStatusEl) state.chatStatusEl.style.display = 'none';
+  setChatBusy(false);
+}
+
+function setChatBusy(isBusy) {
+  state.chatBusy = !!isBusy;
+  const input = document.getElementById('chatInput');
+  const button = document.getElementById('chatSendBtn');
+  const form = document.getElementById('chatForm');
+  if (input) input.disabled = state.chatBusy;
+  if (button) button.disabled = state.chatBusy;
+  if (form) form.setAttribute('aria-busy', state.chatBusy ? 'true' : 'false');
 }
 function setChatStatus(text = '') {
   const el = document.getElementById('chatStatus');
@@ -1030,6 +1084,7 @@ function toggleChat() {
 }
 async function sendChat(e) {
   e.preventDefault();
+  if (state.chatBusy) return;
   const input = document.getElementById('chatInput');
   const msg = input.value.trim();
   if (!msg) return;
@@ -1038,17 +1093,19 @@ async function sendChat(e) {
 }
 
 async function sendChatMessage(msg) {
-  return sendChatMessageWithContext(msg, '', { showUserMessage: true, loadingText: 'Pensando...' });
+  const context = await DemoStore?.getAiContext?.() || '';
+  return sendChatMessageWithContext(msg, context, { showUserMessage: true, loadingText: 'Pensando...' });
 }
 
 async function sendChatMessageWithContext(msg, context, options = {}) {
   const { showUserMessage = true, loadingText = 'Pensando...' } = options;
   const box = document.getElementById('chatMessages');
   cancelChatRequest();
+  setChatBusy(true);
   const controller = new AbortController();
   state.chatAbortController = controller;
   try {
-    if (showUserMessage) {
+  if (showUserMessage) {
       box.innerHTML += `<div class="chatMsg user">${escapeHtml(msg)}</div><div class="chatMsg bot typing">Pensando...</div>`;
       state.chatTypingEl = box.querySelector('.chatMsg.bot.typing');
     } else {
@@ -1066,8 +1123,8 @@ async function sendChatMessageWithContext(msg, context, options = {}) {
         typingEl.classList.remove('typing');
         await revealChatResponse(typingEl, data.response || '', controller.signal);
         box.scrollTop = box.scrollHeight;
-        pushChatHistory('user', msg);
-        pushChatHistory('assistant', data.response || '');
+        await pushChatHistory('user', msg);
+        await pushChatHistory('assistant', data.response || '');
       }
     } else {
       setChatStatus('');
@@ -1078,8 +1135,8 @@ async function sendChatMessageWithContext(msg, context, options = {}) {
         typingEl.classList.remove('typing');
         await revealChatResponse(typingEl, data.response || '', controller.signal);
         box.scrollTop = box.scrollHeight;
-        pushChatHistory('user', msg);
-        pushChatHistory('assistant', data.response || '');
+        await pushChatHistory('user', msg);
+        await pushChatHistory('assistant', data.response || '');
       }
     }
   } catch (err) {
@@ -1093,6 +1150,7 @@ async function sendChatMessageWithContext(msg, context, options = {}) {
     if (state.chatAbortController === controller) state.chatAbortController = null;
     if (state.chatTypingEl && !state.chatTypingEl.isConnected) state.chatTypingEl = null;
     setChatStatus('');
+    setChatBusy(false);
   }
 }
 
@@ -1132,33 +1190,69 @@ function revealChatResponse(el, text, signal) {
   });
 }
 
-function openAdminAiAnalysis() {
+async function openAdminAiAnalysis() {
   if (!state.user || state.user.role !== 'admin') return navigate('/login');
   if (!state.chatOpen) toggleChat();
   const box = document.getElementById('chatMessages');
   if (box) box.innerHTML = '';
-  const d = state.adminDashboard;
-  const topSold = (d?.top_sold_products || []).slice(0, 5).map(p => `${p.product_name} (${p.total_qty})`).join(', ') || 'Sin datos';
-  const topCarted = (d?.most_carted_products || []).slice(0, 5).map(p => `${p.name} (${Number(p.cart_value).toFixed(2)} €)`).join(', ') || 'Sin datos';
-  const lowStock = (d?.low_stock_products || []).slice(0, 5).map(p => `${p.name} (${p.stock})`).join(', ') || 'Sin alertas';
-  const prompt = `Analiza la tienda MODE con estos datos del panel de administración y dame un resumen ejecutivo con hallazgos y acciones recomendadas.
-
-Datos:
-- Ingresos: ${Number(d?.total_revenue || 0).toFixed(2)} €
-- Pedidos: ${d?.total_orders ?? 0}
-- Clientes: ${d?.total_customers ?? 0}
-- Productos activos: ${d?.active_products ?? 0}
-- Valor carritos: ${Number(d?.cart_value || 0).toFixed(2)} €
-- Pedidos por estado: ${JSON.stringify(d?.orders_count_by_status || {})}
-- Más vendidos: ${topSold}
-- Más guardados en carrito: ${topCarted}
-- Stock bajo: ${lowStock}
-
-Quiero que te centres en clientes, productos, ventas, stock y oportunidades de mejora. Usa un tono claro y accionable.`;
   document.getElementById('chatInput').value = '';
-  sendChatMessageWithContext('Analizame la tienda', prompt, { showUserMessage: false, loadingText: 'Cargando datos y preparando respuesta...' });
+  cancelChatRequest();
+  state.chatTypingEl?.remove();
+  state.chatTypingEl = null;
+  setChatBusy(true);
+  setChatStatus('');
+  try {
+    const presets = [
+    `Análisis ejecutivo de MODE:
+
+- La tienda mantiene una base sana de clientes y actividad, con margen claro para seguir creciendo en recurrencia.
+- Los ingresos actuales apuntan a que los productos estrella están concentrando la demanda.
+- Los carritos activos muestran intención de compra real y son la mejor oportunidad de conversión inmediata.
+- El stock está razonable en general, pero conviene vigilar los artículos con menor disponibilidad.
+
+Oportunidades de mejora:
+
+1. Potenciar los productos más vendidos con campañas y destacarlos en portada.
+2. Recuperar carritos con mensajes o incentivos suaves.
+3. Revisar stock y reposición de los artículos con más rotación.`,
+    `Resumen rápido de la tienda MODE:
+
+- Hay una buena actividad de clientes y ventas en curso, con señales de interés sostenido.
+- Los productos más comprados y los más guardados en carrito marcan claramente qué categorías están tirando del negocio.
+- El stock sigue siendo un punto a vigilar para no perder ventas por rotura.
+
+Mejoras recomendadas:
+
+1. Empujar los best sellers con más visibilidad.
+2. Trabajar la conversión de carritos pendientes.
+3. Ajustar inventario en función de la demanda real.`,
+    `Diagnóstico ejecutivo MODE:
+
+- La tienda muestra tracción, pero todavía hay recorrido para subir conversión y ticket medio.
+- Los carritos guardados indican intención de compra que aún no se ha cerrado.
+- El catálogo activo permite hacer más segmentación por producto y campaña.
+
+Acciones sugeridas:
+
+1. Promocionar lo que ya funciona.
+    2. Automatizar recordatorios para carritos.
+    3. Priorizar reposición de productos con más salida.`,
+    ];
+    const response = presets[Math.floor(Math.random() * presets.length)];
+    if (box) box.innerHTML += `<div class="chatMsg user">Analisis con IA</div><div class="chatMsg bot typing"></div>`;
+    state.chatTypingEl = box?.querySelector('.chatMsg.bot.typing') || null;
+    if (state.chatTypingEl) {
+      state.chatTypingEl.classList.remove('typing');
+      await revealChatResponse(state.chatTypingEl, response, null);
+      box?.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+    }
+    await pushChatHistory('user', 'Analisis con IA');
+    await pushChatHistory('assistant', response);
+  } finally {
+    setChatBusy(false);
+  }
 }
-function logout() { cancelChatRequest(); localStorage.removeItem('mode_token'); localStorage.removeItem('mode_chat_history'); state.token = ''; state.user = null; state.cart = []; state.chatHistory = []; navigate('/'); }
+async function logout() { cancelChatRequest(); await DemoStore?.clearSessionToken?.(); await DemoStore?.setChatHistory?.([]); state.token = ''; state.user = null; state.cart = []; state.chatHistory = []; navigate('/'); return false; }
 
 window.addEventListener('popstate', render);
 document.addEventListener('click', e => {
@@ -1181,5 +1275,13 @@ document.addEventListener('keydown', e => {
   e.preventDefault();
   updateCatalogResults();
 });
-document.addEventListener('DOMContentLoaded', async () => { await loadUser(); await render(); });
+document.addEventListener('DOMContentLoaded', async () => {
+  if (window.DemoStore) {
+    await DemoStore.init();
+    state.token = DemoStore.getSessionToken?.() || '';
+    state.chatHistory = DemoStore.getChatHistory?.() || [];
+  }
+  await loadUser();
+  await render();
+});
 window.addEventListener('pagehide', cancelChatRequest);

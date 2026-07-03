@@ -31,6 +31,8 @@ img { max-width: 100%; display: block; }
 .nav { display: flex; align-items: center; gap: 8px; }
 .nav a { padding: 9px 12px; border-radius: var(--radius2); font-size: 14px; font-weight: 700; color: var(--ink2); }
 .nav a:hover { background: var(--bg); color: var(--ink); }
+.nav a.active { background: var(--ink); color: white; }
+.nav a.active:hover { background: var(--ink); color: white; }
 .menuToggle { display: none; background: transparent; border: 0; }
 .cartBadge { display: inline-grid; place-items: center; min-width: 20px; min-height: 20px; padding: 0 6px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 12px; }
 
@@ -45,6 +47,7 @@ img { max-width: 100%; display: block; }
 .btn:hover { transform: translateY(-1px); }
 .btnPrimary { background: var(--ink); color: white; }
 .btnSecondary { background: white; color: var(--ink); border: 1px solid var(--border); }
+.btnSecondary.danger { background: #fff5f5; border-color: #f1c0bf; color: #9b1c20; }
 .btnSmall { min-height: 36px; padding: 0 12px; font-size: 13px; }
 .btn:disabled { opacity: .55; cursor: wait; }
 .addToCartBtn.addedConfirm { background: var(--green); color: white; }

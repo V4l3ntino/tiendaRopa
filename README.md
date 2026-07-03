@@ -105,7 +105,6 @@ Todas las imágenes de semilla (productos, categorías y hero) han sido migradas
 | Variable | Descripción | Defecto |
 |---|---|---|
 | `PORT` | Puerto del servidor | `8011` |
-| `DATABASE_PATH` | Ruta de la BD SQLite | `./data/shop.sqlite3` |
 | `OLLAMA_URL` | URL de Ollama | `http://127.0.0.1:11434` |
 | `OLLAMA_MODEL` | Modelo de Ollama | `llama3.1:8b` |
 | `STRIPE_API_KEY` | API key de Stripe | `""` |

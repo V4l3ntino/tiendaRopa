@@ -14,7 +14,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8011
 ## Key facts
 
 - **Port**: 8011 (configurable via `PORT` in `.env`)
-- **DB**: SQLite at `data/shop.sqlite3`, auto-created + seeded on startup (20 demo products across 7 categories)
+- **DB**: Demo state lives in browser IndexedDB via `frontend/demoStore.js`; SQLite backend support is legacy and disabled by default
 - **Frontend**: SPA served by FastAPI — `GET /` returns `frontend/index.html`, static assets at `/assets`
 - **Auth**: Token-based (stored in localStorage), admin user: `admin@mode.com` / `admin123`
 - **Ollama**: Uses `llama3.1:8b` for AI assistant chat. Model must be pulled: `ollama pull llama3.1:8b`
