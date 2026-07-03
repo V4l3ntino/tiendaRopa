@@ -136,6 +136,23 @@
     return products.find(p => p.name === name);
   }
 
+  function inferCatalogCategory(query) {
+    const q = String(query || '').toLowerCase();
+    const aliases = [
+      ['chaqueta', ['chaqueta', 'chaquetas', 'abrigo', 'abrigos', 'cazadora', 'cazadoras']],
+      ['zapatos', ['zapato', 'zapatos', 'zapatilla', 'zapatillas', 'bota', 'botas', 'sneaker', 'sneakers']],
+      ['pantalones', ['pantalon', 'pantalones', 'jeans', 'cargo', 'chino', 'chinos']],
+      ['camisetas', ['camiseta', 'camisetas', 'polo', 'polos']],
+      ['accesorios', ['accesorio', 'accesorios', 'gorra', 'gorras', 'mochila', 'mochilas', 'bufanda', 'bufandas', 'cinturon', 'cinturones']],
+      ['vestidos', ['vestido', 'vestidos']],
+      ['sudaderas', ['sudadera', 'sudaderas', 'jersey', 'jerséis', 'jerseys']],
+    ];
+    for (const [category, words] of aliases) {
+      if (words.some(word => q.includes(word))) return category;
+    }
+    return '';
+  }
+
   function buildSeedState() {
     const categories = CATEGORIES.map((c, idx) => ({ id: idx + 1, name: c.name, slug: slugify(c.name), image: c.image }));
     const categoryMap = new Map(categories.map(c => [c.name, c]));
@@ -318,6 +335,28 @@
     next.order_items = Array.isArray(next.order_items) ? next.order_items : [];
     next.reviews = Array.isArray(next.reviews) ? next.reviews : [];
     return next;
+  }
+
+  function businessSnapshot(source) {
+    const stateData = source || {};
+    return {
+      users: (stateData.users || []).map(({ id, name, email, phone, role, password }) => ({ id, name, email, phone, role, password })),
+      categories: (stateData.categories || []).map(({ id, name, slug, image }) => ({ id, name, slug, image })),
+      products: (stateData.products || []).map(({ id, name, brand, category_id, description, characteristics, composition_care, price, compare_price, image, images, sizes, colors, tags, gender, stock, active, featured, on_sale, rating }) => ({
+        id, name, brand, category_id, description, characteristics, composition_care, price, compare_price, image, images, sizes, colors, tags, gender, stock, active, featured, on_sale, rating,
+      })),
+      cart_items: (stateData.cart_items || []).map(({ id, user_id, product_id, quantity, size, color }) => ({ id, user_id, product_id, quantity, size, color })),
+      orders: (stateData.orders || []).map(({ id, user_id, status, total, subtotal, tax, shipping, discount, address, city, state, zip_code, country, phone, notes, shipping_method, payment_method, payment_id }) => ({
+        id, user_id, status, total, subtotal, tax, shipping, discount, address, city, state, zip_code, country, phone, notes, shipping_method, payment_method, payment_id,
+      })),
+      order_items: (stateData.order_items || []).map(({ id, order_id, product_id, product_name, price, quantity, size, color }) => ({ id, order_id, product_id, product_name, price, quantity, size, color })),
+      reviews: (stateData.reviews || []).map(({ id, user_id, product_id, rating, comment }) => ({ id, user_id, product_id, rating, comment })),
+      nextIds: clone(stateData.nextIds || {}),
+    };
+  }
+
+  function businessFingerprint(source) {
+    return JSON.stringify(businessSnapshot(source));
   }
 
   async function ensureState() {
@@ -529,6 +568,11 @@
     return clone(state);
   }
 
+  async function hasUserChanges() {
+    await ensureState();
+    return businessFingerprint(state) !== businessFingerprint(buildSeedState());
+  }
+
   async function setChatHistory(history) {
     await ensureState();
     state.chatHistory = Array.isArray(history) ? history.slice(-20) : [];
@@ -546,9 +590,14 @@
     return clone(state?.chatHistory || []);
   }
 
-  async function getAiContext() {
+  async function getAiContext(query = '', options = {}) {
     await ensureState();
+    const privateContext = !!options.privateContext;
     const dashboard = computeDashboard();
+    const q = String(query || '').toLowerCase().trim();
+    const categoryFilter = privateContext ? '' : inferCatalogCategory(q);
+    const budgetMatch = q.match(/(\d+(?:[.,]\d+)?)/);
+    const budget = budgetMatch ? Number(budgetMatch[1].replace(',', '.')) : null;
     const customerStats = state.users
       .filter(u => u.role === 'user')
       .map(u => {
@@ -559,20 +608,50 @@
       })
       .sort((a, b) => b.order_count - a.order_count || b.total_spent - a.total_spent);
     const topCustomer = customerStats[0];
-    const topCustomersText = customerStats.slice(0, 5).map(c => `- ${c.name} (${c.order_count} pedidos, ${c.total_spent.toFixed(2)} € gastados, carrito ${c.cart_value.toFixed(2)} €)`).join('\n') || 'Sin clientes';
-    const topSoldText = (dashboard.top_sold_products || []).map(p => `- ${p.product_name}: ${p.total_qty} uds, ${Number(p.total_rev || 0).toFixed(2)} €`).join('\n') || 'Sin ventas';
-    const cartedText = (dashboard.most_carted_products || []).map(p => `- ${p.name}: ${p.total_qty} uds, carrito ${Number(p.cart_value || 0).toFixed(2)} €`).join('\n') || 'Sin carritos';
-    const lowStockText = (dashboard.low_stock_products || []).map(p => `- ${p.name}: stock ${p.stock}`).join('\n') || 'Sin alertas';
-    const productsText = state.products.filter(p => p.active).slice(0, 12).map(p => `- ${p.name} (${p.brand}), ${Number(p.price).toFixed(2)} EUR, stock ${p.stock}`).join('\n');
+    const topCustomersText = customerStats.slice(0, 4).map(c => `${c.name}|${c.order_count}|${c.total_spent.toFixed(2)}|${c.cart_value.toFixed(2)}`).join(';') || 'none';
+    const topSoldText = (dashboard.top_sold_products || []).slice(0, 4).map(p => `${p.product_name}|${p.total_qty}|${Number(p.total_rev || 0).toFixed(2)}`).join(';') || 'none';
+    const cartedText = (dashboard.most_carted_products || []).slice(0, 4).map(p => `${p.name}|${p.total_qty}|${Number(p.cart_value || 0).toFixed(2)}`).join(';') || 'none';
+    const lowStockText = (dashboard.low_stock_products || []).slice(0, 5).map(p => `${p.name}|${p.stock}`).join(';') || 'none';
+    const activeProducts = state.products.filter(p => p.active);
+    const catalogProducts = activeProducts.filter(p => {
+      if (!categoryFilter) return true;
+      return String(p.category_slug || '').toLowerCase() === categoryFilter || String(p.category_name || '').toLowerCase() === categoryFilter || String(p.category_name || '').toLowerCase().includes(categoryFilter);
+    });
+    const matchedProducts = q
+      ? catalogProducts.filter(p => [p.name, p.brand, p.description, p.tags, p.category_name, p.category_slug].join(' ').toLowerCase().includes(q)).slice(0, 5)
+      : [];
+    const budgetProducts = budget
+      ? catalogProducts
+        .filter(p => Number(p.price) <= budget)
+        .sort((a, b) => a.price - b.price)
+        .slice(0, 5)
+      : [];
+    const productsText = matchedProducts.length
+      ? matchedProducts.map(p => `${p.name}|${p.brand}|current_price=${Number(p.price).toFixed(2)}|old_price=${p.compare_price == null ? 'none' : Number(p.compare_price).toFixed(2)}|stock=${p.stock}|category=${String(p.category_name || '').replace(/\|/g, ' ')}`).join(';')
+      : catalogProducts.map(p => `${p.name}|${p.brand}|current_price=${Number(p.price).toFixed(2)}|old_price=${p.compare_price == null ? 'none' : Number(p.compare_price).toFixed(2)}|stock=${p.stock}|category=${String(p.category_name || '').replace(/\|/g, ' ')}`).join(';') || 'none';
+    const budgetText = budgetProducts.length
+      ? budgetProducts.map(p => `${p.name}|${p.brand}|current_price=${Number(p.price).toFixed(2)}|old_price=${p.compare_price == null ? 'none' : Number(p.compare_price).toFixed(2)}|stock=${p.stock}`).join(';')
+      : 'none';
+    if (!privateContext) {
+      return [
+        `CATALOG_FILTER|${categoryFilter || 'none'}`,
+        `BUDGET_REQUEST|${budget ? `budget=${budget.toFixed(2)}|currency=EUR` : 'none'}`,
+        `BUDGET_MATCHES|${budgetText}`,
+        `PRODUCT_MATCHES|${productsText}`,
+      ].join('\n');
+    }
     return [
-      `Resumen de negocio: ${dashboard.total_orders} pedidos, ${dashboard.total_customers} clientes, ${dashboard.active_products} productos activos, ingresos ${Number(dashboard.total_revenue).toFixed(2)} EUR, valor carritos ${Number(dashboard.cart_value).toFixed(2)} EUR.`,
-      topCustomer ? `Cliente con más pedidos: ${topCustomer.name} (${topCustomer.order_count} pedidos).` : 'Cliente con más pedidos: no disponible.',
-      `Top clientes:\n${topCustomersText}`,
-      `Productos más vendidos:\n${topSoldText}`,
-      `Productos más guardados en carrito:\n${cartedText}`,
-      `Stock bajo:\n${lowStockText}`,
-      `Catálogo disponible:\n${productsText}`,
-    ].join('\n\n');
+      `CATALOG_FILTER|${categoryFilter || 'none'}`,
+      `BUSINESS|orders=${dashboard.total_orders}|customers=${dashboard.total_customers}|active_products=${dashboard.active_products}|revenue=${Number(dashboard.total_revenue).toFixed(2)}|cart_value=${Number(dashboard.cart_value).toFixed(2)}`,
+      `TOP_CUSTOMER|${topCustomer ? `${topCustomer.name}|${topCustomer.order_count}` : 'none'}`,
+      `TOP_CUSTOMERS|${topCustomersText}`,
+      `TOP_SOLD|${topSoldText}`,
+      `TOP_CARTED|${cartedText}`,
+      `LOW_STOCK|${lowStockText}`,
+      `BUDGET_REQUEST|${budget ? `budget=${budget.toFixed(2)}|currency=EUR` : 'none'}`,
+      `BUDGET_MATCHES|${budgetText}`,
+      `PRODUCT_MATCHES|${productsText}`,
+    ].join('\n');
   }
 
   async function listOrdersForUser(userId) {
@@ -879,6 +958,7 @@
     setChatHistory,
     appendChatHistory,
     getAiContext,
+    hasUserChanges,
     getState: () => clone(state),
   };
 })();

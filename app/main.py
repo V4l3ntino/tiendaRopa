@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -51,24 +52,39 @@ def robots() -> FileResponse:
     return FileResponse(FRONTEND / "robots.txt")
 
 
+def sanitize_ai_response(text: str) -> str:
+    lines = []
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            lines.append("")
+            continue
+        line = re.sub(r"\s*\(?\s*(remember|recuerda|note|nota|rule|regla)[^\)]*\)?\s*", " ", line, flags=re.I)
+        if not line.strip():
+            continue
+        if "respuesta final sin explicaciones" in line.lower() or "reglas del modelo" in line.lower():
+            continue
+        lines.append(line.rstrip())
+    cleaned = "\n".join(lines).strip()
+    return re.sub(r"\n{3,}", "\n\n", cleaned)
+
+
 @app.post("/api/ai/chat")
 def ai_chat(payload: ChatIn, token: str = Query("")) -> dict:
-    history_lines = []
-    for item in (payload.history or [])[-12:]:
-        role = str(item.get("role", "")).strip().lower()
-        content = str(item.get("content", "")).strip()
-        if not content:
-            continue
-        if role not in ("user", "assistant"):
-            role = "user"
-        history_lines.append(f"{role}: {content}")
-
-    prompt = "Eres asesor de moda de una tienda online. Responde en español, breve y útil. Recomienda solo productos del catálogo si encajan."
-    if history_lines:
-        prompt += "\n\nHistorial reciente de conversación:\n" + "\n".join(history_lines)
+    normalized_message = payload.message.lower()
+    table_task = any(word in normalized_message for word in ("tabla", "lista", "muestra", "muéstrame", "muestreme", "catálogo", "catalogo"))
+    prompt = (
+        "MODE_AI_V1\n"
+        "ROLE=asistente_catalogo\n"
+        "STYLE=directo|breve|sin_saludo|sin_intro\n"
+        "RULES=usa_solo_contexto;si_piden_tabla_devuelve_markdown;si_el_contexto_incluye_BUSINESS_responde_como_analista;si_no_hay_datos_dilo_breve;no_asumas_cliente;no_inventes_precios;no_inventes_moneda;responde_en_espanol\n"
+        "FORMAT=respuesta_final\n"
+    )
+    if table_task:
+        prompt += "TASK=si_hay_datos_devuelve_solo_tabla_markdown_sin_texto_extra\n"
     if payload.context.strip():
-        prompt += f"\n\nContexto interno para analizar la tienda:\n{payload.context.strip()}"
-    prompt += f"\n\nContexto del catálogo:\n{payload.context.strip() or 'Sin contexto adicional'}\n\nPregunta del usuario: {payload.message}"
+        prompt += f"\nCONTEXT=\n{payload.context.strip()}\n"
+    prompt += f"QUESTION= {payload.message}"
     fallback = "Ahora mismo puedo ayudarte con chaquetas, camisetas, zapatos, pantalones y accesorios. Dime talla, color, presupuesto y ocasión para recomendarte una opción."
 
     try:
@@ -79,7 +95,7 @@ def ai_chat(payload: ChatIn, token: str = Query("")) -> dict:
         )
         with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as res:
             data = json.loads(res.read().decode())
-        return {"response": data.get("response", fallback), "model": OLLAMA_MODEL}
+        return {"response": sanitize_ai_response(data.get("response", fallback)), "model": OLLAMA_MODEL}
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
         return {"response": fallback, "model": "fallback"}
 

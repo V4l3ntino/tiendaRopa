@@ -1093,38 +1093,45 @@ async function sendChat(e) {
 }
 
 async function sendChatMessage(msg) {
-  const context = await DemoStore?.getAiContext?.() || '';
+  const context = await DemoStore?.getAiContext?.(msg, { privateContext: state.user?.role === 'admin' }) || '';
   return sendChatMessageWithContext(msg, context, { showUserMessage: true, loadingText: 'Pensando...' });
 }
 
 async function sendChatMessageWithContext(msg, context, options = {}) {
-  const { showUserMessage = true, loadingText = 'Pensando...' } = options;
+  const { showUserMessage = true, loadingText = 'Pensando...', displayMessage = msg } = options;
   const box = document.getElementById('chatMessages');
   cancelChatRequest();
   setChatBusy(true);
   const controller = new AbortController();
   state.chatAbortController = controller;
   try {
-  if (showUserMessage) {
-      box.innerHTML += `<div class="chatMsg user">${escapeHtml(msg)}</div><div class="chatMsg bot typing">Pensando...</div>`;
+    if (showUserMessage) {
+      box.innerHTML += `<div class="chatMsg user">${escapeHtml(displayMessage)}</div><div class="chatMsg bot typing">Pensando...</div>`;
       state.chatTypingEl = box.querySelector('.chatMsg.bot.typing');
     } else {
       setChatStatus(loadingText);
     }
     const data = await api('/api/ai/chat', {
       method: 'POST',
-      body: JSON.stringify({ message: msg, history: state.chatHistory, context }),
+      body: JSON.stringify({ message: msg, context }),
       signal: controller.signal,
     });
     if (controller.signal.aborted) return;
+    const response = data.response || '';
+    const isStructuredResponse = data.model === 'local-table' || /^\|.+\|$/m.test(response) || response.includes('\n|---|');
     if (showUserMessage) {
       const typingEl = state.chatTypingEl;
       if (typingEl) {
         typingEl.classList.remove('typing');
-        await revealChatResponse(typingEl, data.response || '', controller.signal);
+        if (isStructuredResponse) {
+          typingEl.innerHTML = markdownToHtml(response);
+          typingEl.closest('.chatMessages')?.scrollTo({ top: typingEl.closest('.chatMessages').scrollHeight, behavior: 'smooth' });
+        } else {
+          await revealChatResponse(typingEl, response, controller.signal);
+        }
         box.scrollTop = box.scrollHeight;
         await pushChatHistory('user', msg);
-        await pushChatHistory('assistant', data.response || '');
+        await pushChatHistory('assistant', response);
       }
     } else {
       setChatStatus('');
@@ -1133,10 +1140,14 @@ async function sendChatMessageWithContext(msg, context, options = {}) {
       const typingEl = state.chatTypingEl;
       if (typingEl) {
         typingEl.classList.remove('typing');
-        await revealChatResponse(typingEl, data.response || '', controller.signal);
+        if (isStructuredResponse) {
+          typingEl.innerHTML = markdownToHtml(response);
+        } else {
+          await revealChatResponse(typingEl, response, controller.signal);
+        }
         box.scrollTop = box.scrollHeight;
         await pushChatHistory('user', msg);
-        await pushChatHistory('assistant', data.response || '');
+        await pushChatHistory('assistant', response);
       }
     }
   } catch (err) {
@@ -1199,11 +1210,13 @@ async function openAdminAiAnalysis() {
   cancelChatRequest();
   state.chatTypingEl?.remove();
   state.chatTypingEl = null;
-  setChatBusy(true);
-  setChatStatus('');
   try {
-    const presets = [
-    `Análisis ejecutivo de MODE:
+    const hasChanges = await DemoStore?.hasUserChanges?.();
+    if (!hasChanges) {
+      setChatBusy(true);
+      setChatStatus('');
+      const presets = [
+        `Análisis ejecutivo de MODE:
 
 - La tienda mantiene una base sana de clientes y actividad, con margen claro para seguir creciendo en recurrencia.
 - Los ingresos actuales apuntan a que los productos estrella están concentrando la demanda.
@@ -1215,7 +1228,7 @@ Oportunidades de mejora:
 1. Potenciar los productos más vendidos con campañas y destacarlos en portada.
 2. Recuperar carritos con mensajes o incentivos suaves.
 3. Revisar stock y reposición de los artículos con más rotación.`,
-    `Resumen rápido de la tienda MODE:
+        `Resumen rápido de la tienda MODE:
 
 - Hay una buena actividad de clientes y ventas en curso, con señales de interés sostenido.
 - Los productos más comprados y los más guardados en carrito marcan claramente qué categorías están tirando del negocio.
@@ -1226,7 +1239,7 @@ Mejoras recomendadas:
 1. Empujar los best sellers con más visibilidad.
 2. Trabajar la conversión de carritos pendientes.
 3. Ajustar inventario en función de la demanda real.`,
-    `Diagnóstico ejecutivo MODE:
+        `Diagnóstico ejecutivo MODE:
 
 - La tienda muestra tracción, pero todavía hay recorrido para subir conversión y ticket medio.
 - Los carritos guardados indican intención de compra que aún no se ha cerrado.
@@ -1235,19 +1248,27 @@ Mejoras recomendadas:
 Acciones sugeridas:
 
 1. Promocionar lo que ya funciona.
-    2. Automatizar recordatorios para carritos.
-    3. Priorizar reposición de productos con más salida.`,
-    ];
-    const response = presets[Math.floor(Math.random() * presets.length)];
-    if (box) box.innerHTML += `<div class="chatMsg user">Analisis con IA</div><div class="chatMsg bot typing"></div>`;
-    state.chatTypingEl = box?.querySelector('.chatMsg.bot.typing') || null;
-    if (state.chatTypingEl) {
-      state.chatTypingEl.classList.remove('typing');
-      await revealChatResponse(state.chatTypingEl, response, null);
-      box?.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+2. Automatizar recordatorios para carritos.
+3. Priorizar reposición de productos con más salida.`,
+      ];
+      const response = presets[Math.floor(Math.random() * presets.length)];
+      if (box) box.innerHTML += `<div class="chatMsg user">Analisis con IA</div><div class="chatMsg bot typing"></div>`;
+      state.chatTypingEl = box?.querySelector('.chatMsg.bot.typing') || null;
+      if (state.chatTypingEl) {
+        state.chatTypingEl.classList.remove('typing');
+        await revealChatResponse(state.chatTypingEl, response, null);
+        box?.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+      }
+      await pushChatHistory('user', 'Analisis con IA');
+      await pushChatHistory('assistant', response);
+      return;
     }
-    await pushChatHistory('user', 'Analisis con IA');
-    await pushChatHistory('assistant', response);
+    const context = await DemoStore?.getAiContext?.('', { privateContext: true }) || '';
+    await sendChatMessageWithContext(
+      'Haz un análisis ejecutivo de la tienda MODE con foco en clientes, ingresos, productos más vendidos, carritos y stock. Incluye 2 o 3 oportunidades de mejora claras.',
+      context,
+      { showUserMessage: true, loadingText: 'Analizando la tienda...', displayMessage: 'Analisis con IA' },
+    );
   } finally {
     setChatBusy(false);
   }
