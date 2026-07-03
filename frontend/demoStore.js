@@ -71,6 +71,18 @@
     { email: 'sofia@example.com', product: 'Chaqueta de Cuero Clásica', rating: 5, comment: 'Acabado excelente y muy buena calidad.' },
   ];
 
+  const SIZE_TEMPLATE_DEFS = [
+    { name: 'Ropa estándar', items: ['XS', 'S', 'M', 'L', 'XL', 'XXL'] },
+    { name: 'Calzado EU', items: ['38', '39', '40', '41', '42', '43', '44'] },
+    { name: 'Accesorio único', items: ['Única'] },
+  ];
+
+  const COLOR_TEMPLATE_DEFS = [
+    { name: 'Básicos', items: [{ name: 'Negro', hex: '#171717' }, { name: 'Blanco', hex: '#f5f5f5' }, { name: 'Gris', hex: '#77777d' }] },
+    { name: 'Primarios', items: [{ name: 'Rojo', hex: '#b12b2f' }, { name: 'Azul', hex: '#1a56db' }, { name: 'Verde', hex: '#1d7f55' }] },
+    { name: 'Tierra', items: [{ name: 'Marrón', hex: '#8B6914' }, { name: 'Beige', hex: '#e8dcc8' }, { name: 'Caqui', hex: '#C3B091' }] },
+  ];
+
   function clone(value) {
     return typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value));
   }
@@ -86,6 +98,11 @@
       }
     }
     return [];
+  }
+
+  function colorLabel(value) {
+    if (value && typeof value === 'object') return String(value.name || '').trim();
+    return String(value || '').trim();
   }
 
   function slugify(text) {
@@ -251,6 +268,8 @@
         created_at: nowIso(8 - idx),
       };
     });
+    const size_templates = SIZE_TEMPLATE_DEFS.map((tpl, idx) => ({ id: idx + 1, name: tpl.name, items: [...tpl.items] }));
+    const color_templates = COLOR_TEMPLATE_DEFS.map((tpl, idx) => ({ id: idx + 1, name: tpl.name, items: tpl.items.map(c => ({ name: c.name, hex: c.hex })) }));
 
     return {
       meta: { seedVersion: SEED_VERSION },
@@ -263,6 +282,8 @@
       orders,
       order_items,
       reviews,
+      size_templates,
+      color_templates,
       nextIds: {
         user: users.length + 1,
         category: categories.length + 1,
@@ -271,6 +292,8 @@
         order: nextOrderId,
         order_item: nextOrderItemId,
         review: nextReviewId,
+        size_template: size_templates.length + 1,
+        color_template: color_templates.length + 1,
       },
     };
   }
@@ -326,6 +349,8 @@
       order: (next.orders?.length || 0) + 1,
       order_item: (next.order_items?.length || 0) + 1,
       review: (next.reviews?.length || 0) + 1,
+      size_template: (next.size_templates?.length || 0) + 1,
+      color_template: (next.color_templates?.length || 0) + 1,
     };
     next.users = Array.isArray(next.users) ? next.users : [];
     next.categories = Array.isArray(next.categories) ? next.categories : [];
@@ -334,6 +359,10 @@
     next.orders = Array.isArray(next.orders) ? next.orders : [];
     next.order_items = Array.isArray(next.order_items) ? next.order_items : [];
     next.reviews = Array.isArray(next.reviews) ? next.reviews : [];
+    next.size_templates = Array.isArray(next.size_templates) ? next.size_templates : SIZE_TEMPLATE_DEFS.map((tpl, idx) => ({ id: idx + 1, name: tpl.name, items: [...tpl.items] }));
+    next.color_templates = Array.isArray(next.color_templates) ? next.color_templates : COLOR_TEMPLATE_DEFS.map((tpl, idx) => ({ id: idx + 1, name: tpl.name, items: tpl.items.map(c => ({ name: c.name, hex: c.hex })) }));
+    next.nextIds.size_template = next.nextIds.size_template || Math.max(0, ...next.size_templates.map(t => Number(t.id) || 0)) + 1;
+    next.nextIds.color_template = next.nextIds.color_template || Math.max(0, ...next.color_templates.map(t => Number(t.id) || 0)) + 1;
     return next;
   }
 
@@ -573,6 +602,50 @@
     return businessFingerprint(state) !== businessFingerprint(buildSeedState());
   }
 
+  function normalizeColorItem(item) {
+    if (item && typeof item === 'object') return { name: String(item.name || '').trim(), hex: String(item.hex || '#777777') };
+    return { name: String(item || '').trim(), hex: '#777777' };
+  }
+
+  async function listOptionTemplates(type) {
+    await ensureState();
+    return clone(type === 'colors' ? state.color_templates : state.size_templates);
+  }
+
+  async function saveOptionTemplate(type, payload) {
+    await ensureState();
+    const key = type === 'colors' ? 'color_templates' : 'size_templates';
+    const idKey = type === 'colors' ? 'color_template' : 'size_template';
+    const list = state[key];
+    const id = Number(payload.id || 0);
+    const name = String(payload.name || '').trim();
+    if (!name) throw new Error('La plantilla necesita un nombre');
+    const items = type === 'colors'
+      ? (payload.items || []).map(normalizeColorItem).filter(i => i.name)
+      : (payload.items || []).map(i => String(i || '').trim()).filter(Boolean);
+    if (!items.length) throw new Error('La plantilla necesita al menos un elemento');
+    if (id) {
+      const current = list.find(t => Number(t.id) === id);
+      if (!current) throw new Error('Plantilla no encontrada');
+      current.name = name;
+      current.items = items;
+      await save();
+      return clone(current);
+    }
+    const template = { id: state.nextIds[idKey]++, name, items };
+    list.push(template);
+    await save();
+    return clone(template);
+  }
+
+  async function deleteOptionTemplate(type, id) {
+    await ensureState();
+    const key = type === 'colors' ? 'color_templates' : 'size_templates';
+    state[key] = state[key].filter(t => Number(t.id) !== Number(id));
+    await save();
+    return true;
+  }
+
   async function setChatHistory(history) {
     await ensureState();
     state.chatHistory = Array.isArray(history) ? history.slice(-20) : [];
@@ -755,7 +828,7 @@
     if (path === '/api/filters' && method === 'GET') {
       const brands = [...new Set(state.products.filter(p => p.active).map(p => p.brand).filter(Boolean))].sort();
       const sizes = [...new Set(state.products.filter(p => p.active).flatMap(p => JSON.parse(p.sizes || '[]')))].sort();
-      const colors = [...new Set(state.products.filter(p => p.active).flatMap(p => JSON.parse(p.colors || '[]')))].sort();
+      const colors = [...new Set(state.products.filter(p => p.active).flatMap(p => JSON.parse(p.colors || '[]').map(colorLabel).filter(Boolean)))].sort();
       return { brands, categories: clone(state.categories), sizes, colors };
     }
     if (path === '/api/products' && method === 'GET') return applyProductFilters(u.searchParams);
@@ -959,6 +1032,9 @@
     appendChatHistory,
     getAiContext,
     hasUserChanges,
+    listOptionTemplates,
+    saveOptionTemplate,
+    deleteOptionTemplate,
     getState: () => clone(state),
   };
 })();

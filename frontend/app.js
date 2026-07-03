@@ -12,6 +12,7 @@ const state = {
   chatStatusEl: null,
   chatBusy: false,
   adminDashboard: null,
+  adminOptionDraft: null,
   chatHistory: [],
 };
 
@@ -55,11 +56,26 @@ function renderStars(rating) {
   return '<span class="stars">' + stars.join('') + '</span>';
 }
 
-function getColorSwatchStyle(color) {
-  const c = color.toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+function colorName(value) {
+  if (value && typeof value === 'object') return String(value.name || '').trim();
+  return String(value || '').trim();
+}
+
+function colorHex(value) {
+  if (value && typeof value === 'object' && /^#[0-9a-f]{6}$/i.test(String(value.hex || ''))) return String(value.hex);
+  return '';
+}
+
+function normalizeColorOption(value) {
+  const name = colorName(value);
+  return { name, hex: colorHex(value) || getColorHexByName(name) };
+}
+
+function getColorHexByName(color) {
+  const c = String(color || '').toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const map = {
     'negro': '#171717', 'black': '#171717',
-    'blanco': '#fff', 'white': '#f5f5f5',
+    'blanco': '#f5f5f5', 'white': '#f5f5f5',
     'rojo': '#b12b2f', 'red': '#b12b2f',
     'azul': '#1a56db', 'blue': '#1a56db',
     'verde': '#1d7f55', 'green': '#1d7f55',
@@ -75,9 +91,11 @@ function getColorSwatchStyle(color) {
     'plateado': '#c0c0c0', 'silver': '#c0c0c0',
     'dorado': '#b88a44', 'gold': '#b88a44',
   };
-  const hex = map[c];
-  if (hex) return 'background:' + hex;
-  return 'background:#d8d2c8';
+  return map[c] || '#d8d2c8';
+}
+
+function getColorSwatchStyle(color) {
+  return 'background:' + (colorHex(color) || getColorHexByName(colorName(color)));
 }
 
 function sameOriginPath(href) {
@@ -423,6 +441,7 @@ async function renderProduct() {
   const p = await api(`/api/products/${id}`);
   const sizes = parseList(p.sizes);
   const colors = parseList(p.colors);
+  const colorOptions = colors.map(normalizeColorOption).filter(c => c.name);
   const tags = parseList(p.tags);
   const extraImages = parseList(p.images);
   const characteristics = splitMultiline(p.characteristics);
@@ -463,8 +482,8 @@ async function renderProduct() {
           <span>${Number(p.rating).toFixed(1)}</span>
           <span class="pdStock ${p.stock > 5 ? 'inStock' : p.stock > 0 ? 'lowStock' : 'outStock'}">${p.stock > 5 ? 'En stock' : p.stock > 0 ? 'Últimas unidades' : 'Agotado'}</span>
         </div>
-        ${colors.length ? `<div class="pdOptionLabel">Color: <span id="pdSelectedColor">${escapeHtml(colors[0])}</span></div>
-        <div class="pdColors" id="pdColors">${colors.map(c => `<button class="colorSwatch ${c === colors[0] ? 'selected' : ''}" data-color="${escapeHtml(c)}" onclick="selectPdColor(this)" title="${escapeHtml(c)}" style="${getColorSwatchStyle(c)}"><span>${escapeHtml(c)}</span></button>`).join('')}</div>` : ''}
+        ${colorOptions.length ? `<div class="pdOptionLabel">Color: <span id="pdSelectedColor">${escapeHtml(colorOptions[0].name)}</span></div>
+        <div class="pdColors" id="pdColors">${colorOptions.map((c, i) => `<button class="colorSwatch ${i === 0 ? 'selected' : ''}" data-color="${escapeHtml(c.name)}" onclick="selectPdColor(this)" title="${escapeHtml(c.name)}" style="${getColorSwatchStyle(c)}"><span>${escapeHtml(c.name)}</span></button>`).join('')}</div>` : ''}
         ${sizes.length ? `<div class="pdOptionLabel">Talla: <span id="pdSelectedSize">${escapeHtml(sizes[0])}</span></div>
         <div class="pdSizes" id="pdSizes">${sizes.map(s => `<button class="sizeBtn ${s === sizes[0] ? 'selected' : ''}" data-size="${escapeHtml(s)}" onclick="selectPdSize(this)">${escapeHtml(s)}</button>`).join('')}</div>` : ''}
         <div class="pdActions">
@@ -522,7 +541,7 @@ async function quickAdd(id, btn) {
   if (!state.token) return navigate('/login');
   const p = await api(`/api/products/${id}`);
   const size = parseList(p.sizes)[0] || '';
-  const color = parseList(p.colors)[0] || '';
+  const color = colorName(parseList(p.colors)[0] || '');
   state.cart = await api('/api/cart', { method: 'POST', body: JSON.stringify({ product_id: id, quantity: 1, size, color }) });
   updateNav();
   showToast('Producto añadido al carrito');
@@ -800,10 +819,21 @@ function renderLineSvg(d) {
 function renderAdminProductsHTML(products) {
   return `<div class="adminToolbar"><input class="adminSearchInput" id="adminProdSearch" placeholder="Buscar..." oninput="filterAdminProducts()"><button class="btn btnPrimary" onclick="adminShowProductModal()">+ Añadir producto</button></div><div id="adminProductsTable">${adminProductsTable(products)}</div><div class="adminModalOverlay" id="adminProductModal" style="display:none"><div class="adminModal"><div class="adminModalHeader"><h3 id="adminModalTitle">Producto</h3><button onclick="adminCloseProductModal()">×</button></div><div class="adminModalBody" id="adminProductForm"></div></div></div>`;
 }
+function adminActionIcon(type) {
+  const icons = {
+    edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20h4l12-12-4-4L4 16v4Z"></path><path d="M13 7l4 4"></path></svg>',
+    view: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l2.12-2.12a4 4 0 0 0-5.66-5.66L11 7.34"></path><path d="M14 10a4 4 0 0 0-5.66 0L6.22 12.12a4 4 0 0 0 5.66 5.66L13 16.66"></path></svg>',
+    hide: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 3l18 18"></path><path d="M10.6 10.6A3 3 0 0012 16a3 3 0 002.6-4.4"></path><path d="M4.8 7.2C3.2 8.7 2.5 12 2.5 12s3.5 6 9.5 6c1 0 1.9-.1 2.8-.4"></path><path d="M14.8 5.2C14 5 13.1 4.9 12 4.9c-6 0-9.5 7.1-9.5 7.1s.6 1.1 1.7 2.6"></path></svg>',
+    show: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path><circle cx="12" cy="12" r="3"></circle><path d="M12 7v2"></path></svg>',
+    delete: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 14h10l1-14"></path><path d="M10 10v6"></path><path d="M14 10v6"></path></svg>',
+  };
+  return icons[type] || icons.view;
+}
 function adminProductsTable(products) {
   window._adminProducts = products;
-   return `<div class="tableWrap"><table class="adminTable"><thead><tr><th>ID</th><th>Imagen</th><th>Producto</th><th>Marca</th><th>Precio</th><th>Stock</th><th>Activo</th><th>Acciones</th></tr></thead><tbody>${products.map(p => `<tr data-product-id="${p.id}" data-active="${p.active ? 1 : 0}" data-text="${escapeHtml(`${p.name} ${p.brand}`.toLowerCase())}"><td>${p.id}</td><td><img class="adminThumb" src="${escapeHtml(p.image || '')}" alt=""></td><td><strong>${escapeHtml(p.name)}</strong><br><small>${escapeHtml(p.category_name || '')}</small></td><td>${escapeHtml(p.brand)}</td><td>${Number(p.price).toFixed(2)} €</td><td>${p.stock}</td><td>${p.active ? 'Sí' : 'No'}</td><td><button class="btnTiny" onclick="adminEditProduct(${p.id})">Editar</button><button class="btnTiny" onclick="adminToggleProduct(${p.id}, ${p.active ? 0 : 1})">${p.active ? 'Ocultar' : 'Activar'}</button><button class="btnTiny danger" onclick="adminDeleteProduct(${p.id})">Eliminar</button></td></tr>`).join('')}</tbody></table></div>`;
+    return `<div class="tableWrap"><table class="adminTable"><thead><tr><th>ID</th><th>Imagen</th><th>Producto</th><th>Marca</th><th>Precio</th><th>Stock</th><th>Activo</th><th>Acciones</th></tr></thead><tbody>${products.map(p => `<tr data-product-id="${p.id}" data-active="${p.active ? 1 : 0}" data-text="${escapeHtml(`${p.name} ${p.brand}`.toLowerCase())}"><td>${p.id}</td><td><img class="adminThumb" src="${escapeHtml(p.image || '')}" alt=""></td><td><strong>${escapeHtml(p.name)}</strong><br><small>${escapeHtml(p.category_name || '')}</small></td><td>${escapeHtml(p.brand)}</td><td>${Number(p.price).toFixed(2)} €</td><td>${p.stock}</td><td>${p.active ? 'Sí' : 'No'}</td><td><div class="adminActionsCell"><button class="btnTiny adminActionBtn" type="button" aria-label="Editar producto" title="Editar producto" onclick="adminEditProduct(${p.id})">${adminActionIcon('edit')}</button><button class="btnTiny adminActionBtn" type="button" aria-label="Abrir ficha del producto" title="Abrir ficha del producto" onclick="adminOpenProductPreview(${p.id})">${adminActionIcon('view')}</button><button class="btnTiny adminActionBtn adminToggleBtn" type="button" aria-label="${p.active ? 'Ocultar producto' : 'Activar producto'}" title="${p.active ? 'Ocultar producto' : 'Activar producto'}" onclick="adminToggleProduct(${p.id}, ${p.active ? 0 : 1})">${adminActionIcon(p.active ? 'hide' : 'show')}</button><button class="btnTiny danger adminActionBtn" type="button" aria-label="Eliminar producto" title="Eliminar producto" onclick="adminDeleteProduct(${p.id})">${adminActionIcon('delete')}</button></div></td></tr>`).join('')}</tbody></table></div>`;
 }
+function adminOpenProductPreview(id) { window.open(`/producto/${id}`, '_blank', 'noopener,noreferrer'); }
 function filterAdminProducts() {
   const q = document.getElementById('adminProdSearch').value.toLowerCase();
   document.querySelectorAll('#adminProductsTable tbody tr').forEach(tr => tr.style.display = tr.dataset.text.includes(q) ? '' : 'none');
@@ -812,8 +842,6 @@ function filterAdminProducts() {
 function adminShowProductModal(product = null) {
   document.getElementById('adminProductModal').style.display = 'flex';
   document.getElementById('adminModalTitle').textContent = product ? 'Editar producto' : 'Añadir producto';
-  const sizes = product ? parseList(product.sizes).join(', ') : '';
-  const colors = product ? parseList(product.colors).join(', ') : '';
   const tags = product ? parseList(product.tags).join(', ') : '';
   document.getElementById('adminProductForm').innerHTML = `<div class="adminFormGrid">
     <div class="formGroup"><label>Nombre *</label><input id="pf-name" value="${escapeHtml(product?.name || '')}" oninput="adminUpdateAiHint()"></div>
@@ -828,12 +856,215 @@ function adminShowProductModal(product = null) {
   <div class="formGroup"><label>Características</label><textarea id="pf-characteristics" placeholder="Marca:...\nCategoría:...\nGénero:...\nTags:...">${escapeHtml(product?.characteristics || '')}</textarea></div>
   <div class="formGroup"><label>Composición y cuidados</label><textarea id="pf-composition" placeholder="Tejido...\nCuidado...">${escapeHtml(product?.composition_care || '')}</textarea></div>
   <div class="formGroup"><label>Imagen local del producto</label><div class="imageUploadBox">${product?.image ? `<img id="pf-image-preview" src="${escapeHtml(product.image)}" alt="Preview">` : '<img id="pf-image-preview" style="display:none" alt="Preview">'}<div><input id="pf-image-file" type="file" accept="image/jpeg,image/png,image/webp,image/avif,image/gif" onchange="adminPreviewImage(this)"><small>JPG, PNG, WebP, AVIF o GIF. Se guarda en local.</small><div id="pf-image-status"></div></div></div><input type="hidden" id="pf-image" value="${escapeHtml(product?.image || '')}"></div>
-  <div class="adminFormGrid"><div class="formGroup"><label>Tallas</label><input id="pf-sizes" value="${escapeHtml(sizes)}"></div><div class="formGroup"><label>Colores</label><input id="pf-colors" value="${escapeHtml(colors)}"></div><div class="formGroup"><label>Tags</label><input id="pf-tags" value="${escapeHtml(tags)}"></div><div class="formGroup"><label>Género</label><select id="pf-gender">${['unisex','hombre','mujer'].map(g => `<option ${product?.gender === g ? 'selected' : ''}>${g}</option>`).join('')}</select></div></div>
+  <div class="optionEditorGrid">
+    <section class="optionEditor"><div class="optionEditorHeader"><div><label>Tallas</label><small>Añade una talla por nombre.</small></div><button class="btnTiny" type="button" onclick="adminOpenOptionTemplates('sizes')">Listar plantillas</button></div><div class="optionInputRow"><input id="pf-size-name" placeholder="Ej: M, XL, 42"><button class="btn btnSecondary" id="pf-size-add" type="button" onclick="adminAddSizeOption()">Añadir</button></div><div class="optionChipList" id="pf-size-list"></div><input type="hidden" id="pf-sizes"></section>
+    <section class="optionEditor"><div class="optionEditorHeader"><div><label>Colores</label><small>Nombre + color RGB.</small></div><button class="btnTiny" type="button" onclick="adminOpenOptionTemplates('colors')">Listar plantillas</button></div><div class="optionInputRow colorRow"><input id="pf-color-name" placeholder="Ej: Negro"><input id="pf-color-hex" type="color" value="#171717"><button class="btn btnSecondary" id="pf-color-add" type="button" onclick="adminAddColorOption()">Añadir</button></div><div class="optionChipList" id="pf-color-list"></div><input type="hidden" id="pf-colors"></section>
+  </div>
+  <div class="templatePopupOverlay" id="optionTemplatePopup" style="display:none" onclick="if(event.target.id==='optionTemplatePopup') adminCloseOptionTemplates()"><div class="templatePopup" onclick="event.stopPropagation()" id="optionTemplatePanel"></div></div>
+  <div class="adminFormGrid"><div class="formGroup"><label>Tags</label><input id="pf-tags" value="${escapeHtml(tags)}"></div><div class="formGroup"><label>Género</label><select id="pf-gender">${['unisex','hombre','mujer'].map(g => `<option ${product?.gender === g ? 'selected' : ''}>${g}</option>`).join('')}</select></div></div>
   <div class="checkRow"><label><input id="pf-active" type="checkbox" ${!product || product.active ? 'checked' : ''}> Activo</label><label><input id="pf-featured" type="checkbox" ${product?.featured ? 'checked' : ''}> Destacado</label><label><input id="pf-sale" type="checkbox" ${product?.on_sale ? 'checked' : ''}> Oferta</label></div>
   <div class="modalActions"><button class="btn btnSecondary" onclick="adminCloseProductModal()">Cancelar</button><button class="btn btnPrimary" onclick="adminSaveProduct(${product?.id || 0})">${product ? 'Guardar cambios' : 'Crear producto'}</button></div>`;
+  adminInitOptionEditors(product);
   adminUpdateAiHint();
 }
 function adminCloseProductModal() { document.getElementById('adminProductModal').style.display = 'none'; }
+function adminInitOptionEditors(product = null) {
+  const sizes = product ? parseList(product.sizes).map(s => String(s || '').trim()).filter(Boolean) : [];
+  const colors = product ? parseList(product.colors).map(normalizeColorOption).filter(c => c.name) : [];
+  state.adminOptionDraft = { sizes, colors, editingSize: -1, editingColor: -1, templateType: '', templateSearch: '', editingTemplateId: 0, templateItems: [], templateItemsLoaded: false };
+  adminRenderOptionEditors();
+}
+function adminRenderOptionEditors() {
+  const draft = state.adminOptionDraft;
+  if (!draft) return;
+  const sizeHidden = document.getElementById('pf-sizes');
+  const colorHidden = document.getElementById('pf-colors');
+  if (sizeHidden) sizeHidden.value = JSON.stringify(draft.sizes);
+  if (colorHidden) colorHidden.value = JSON.stringify(draft.colors);
+  const sizeList = document.getElementById('pf-size-list');
+  if (sizeList) sizeList.innerHTML = draft.sizes.length ? draft.sizes.map((size, i) => `<span class="optionChip"><strong>${escapeHtml(size)}</strong><button type="button" onclick="adminEditSizeOption(${i})">Editar</button><button type="button" onclick="adminDeleteSizeOption(${i})">Eliminar</button></span>`).join('') : '<small>Sin tallas añadidas.</small>';
+  const colorList = document.getElementById('pf-color-list');
+  if (colorList) colorList.innerHTML = draft.colors.length ? draft.colors.map((color, i) => `<span class="optionChip colorChip"><span class="miniSwatch" style="background:${escapeHtml(color.hex)}"></span><strong>${escapeHtml(color.name)}</strong><small>${escapeHtml(color.hex)}</small><button type="button" onclick="adminEditColorOption(${i})">Editar</button><button type="button" onclick="adminDeleteColorOption(${i})">Eliminar</button></span>`).join('') : '<small>Sin colores añadidos.</small>';
+  const sizeBtn = document.getElementById('pf-size-add');
+  if (sizeBtn) sizeBtn.textContent = draft.editingSize >= 0 ? 'Guardar' : 'Añadir';
+  const colorBtn = document.getElementById('pf-color-add');
+  if (colorBtn) colorBtn.textContent = draft.editingColor >= 0 ? 'Guardar' : 'Añadir';
+}
+function adminAddSizeOption() {
+  const draft = state.adminOptionDraft;
+  const input = document.getElementById('pf-size-name');
+  const value = input?.value.trim();
+  if (!draft || !value) return showToast('Escribe el nombre de la talla', 'error');
+  if (draft.editingSize >= 0) draft.sizes[draft.editingSize] = value;
+  else if (!draft.sizes.some(s => s.toLowerCase() === value.toLowerCase())) draft.sizes.push(value);
+  draft.editingSize = -1;
+  if (input) input.value = '';
+  adminRenderOptionEditors();
+}
+function adminEditSizeOption(index) {
+  const draft = state.adminOptionDraft;
+  if (!draft || !draft.sizes[index]) return;
+  draft.editingSize = index;
+  document.getElementById('pf-size-name').value = draft.sizes[index];
+  adminRenderOptionEditors();
+}
+function adminDeleteSizeOption(index) {
+  const draft = state.adminOptionDraft;
+  if (!draft) return;
+  draft.sizes.splice(index, 1);
+  draft.editingSize = -1;
+  adminRenderOptionEditors();
+}
+function adminAddColorOption() {
+  const draft = state.adminOptionDraft;
+  const nameInput = document.getElementById('pf-color-name');
+  const hexInput = document.getElementById('pf-color-hex');
+  const name = nameInput?.value.trim();
+  const hex = hexInput?.value || '#777777';
+  if (!draft || !name) return showToast('Escribe el nombre del color', 'error');
+  const color = { name, hex };
+  if (draft.editingColor >= 0) draft.colors[draft.editingColor] = color;
+  else {
+    const existing = draft.colors.findIndex(c => c.name.toLowerCase() === name.toLowerCase());
+    if (existing >= 0) draft.colors[existing] = color;
+    else draft.colors.push(color);
+  }
+  draft.editingColor = -1;
+  if (nameInput) nameInput.value = '';
+  if (hexInput) hexInput.value = '#171717';
+  adminRenderOptionEditors();
+}
+function adminEditColorOption(index) {
+  const draft = state.adminOptionDraft;
+  const color = draft?.colors[index];
+  if (!color) return;
+  draft.editingColor = index;
+  document.getElementById('pf-color-name').value = color.name;
+  document.getElementById('pf-color-hex').value = color.hex || '#777777';
+  adminRenderOptionEditors();
+}
+function adminDeleteColorOption(index) {
+  const draft = state.adminOptionDraft;
+  if (!draft) return;
+  draft.colors.splice(index, 1);
+  draft.editingColor = -1;
+  adminRenderOptionEditors();
+}
+async function adminOpenOptionTemplates(type) {
+  if (!state.adminOptionDraft) return;
+  state.adminOptionDraft.templateType = type;
+  state.adminOptionDraft.templateSearch = '';
+  state.adminOptionDraft.editingTemplateId = 0;
+  state.adminOptionDraft.templateItems = [];
+  state.adminOptionDraft.templateItemsLoaded = false;
+  await adminRenderOptionTemplates();
+}
+function adminCloseOptionTemplates() {
+  const popup = document.getElementById('optionTemplatePopup');
+  if (popup) popup.style.display = 'none';
+}
+async function adminRenderOptionTemplates() {
+  const draft = state.adminOptionDraft;
+  const popup = document.getElementById('optionTemplatePopup');
+  const panel = document.getElementById('optionTemplatePanel');
+  if (!draft || !popup || !panel) return;
+  const type = draft.templateType || 'sizes';
+  const search = String(draft.templateSearch || '').trim().toLowerCase();
+  const templates = (await DemoStore.listOptionTemplates(type)).filter(t => !search || `${t.name} ${(type === 'colors' ? t.items.map(colorName) : t.items).join(' ')}`.toLowerCase().includes(search));
+  const editingTemplate = draft.editingTemplateId ? (await DemoStore.listOptionTemplates(type)).find(t => Number(t.id) === Number(draft.editingTemplateId)) : null;
+  if (editingTemplate && !draft.templateItemsLoaded) {
+    draft.templateItems = type === 'colors' ? editingTemplate.items.map(normalizeColorOption).filter(c => c.name) : editingTemplate.items.map(s => String(s || '').trim()).filter(Boolean);
+    draft.templateItemsLoaded = true;
+  }
+  const label = type === 'colors' ? 'colores' : 'tallas';
+  popup.style.display = 'flex';
+  panel.innerHTML = `<div class="templatePanelHeader"><div><strong>Plantillas de ${label}</strong><small>Busca, crea, edita, aplica o elimina plantillas.</small></div><button type="button" onclick="adminCloseOptionTemplates()">×</button></div><div class="templateSearchRow"><input id="optionTemplateSearch" placeholder="Buscar plantilla..." value="${escapeHtml(draft.templateSearch || '')}" oninput="adminSearchOptionTemplates(this.value)"></div>${editingTemplate ? `<div class="templateEditor"><div class="templateEditorHeader"><div><strong>Editar plantilla</strong><small>Modifica el nombre y los subelementos.</small></div><button type="button" class="btnTiny" onclick="adminCancelTemplateEdit()">Salir de edición</button></div><div class="templateSaveRow"><input id="optionTemplateName" placeholder="Nombre de plantilla" value="${escapeHtml(editingTemplate?.name || '')}"><button class="btn btnPrimary" type="button" onclick="adminSaveCurrentOptionTemplate('${type}')">Guardar plantilla</button></div><div class="templateSubEditor">${type === 'colors' ? `<div class="optionInputRow colorRow"><input id="template-color-name" placeholder="Nombre del color"><input id="template-color-hex" type="color" value="#171717"><button class="btn btnSecondary" type="button" onclick="adminAddTemplateItem('${type}')">Añadir color</button></div>` : `<div class="optionInputRow"><input id="template-size-name" placeholder="Ej: M, XL, 42"><button class="btn btnSecondary" type="button" onclick="adminAddTemplateItem('${type}')">Añadir talla</button></div>`}<div class="optionChipList" id="templateItemList">${(draft.templateItems || []).length ? (draft.templateItems || []).map((item, i) => type === 'colors' ? `<span class="optionChip colorChip"><span class="miniSwatch" style="background:${escapeHtml(item.hex)}"></span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.hex)}</small><button type="button" onclick="adminDeleteTemplateItem(${i})">Eliminar</button></span>` : `<span class="optionChip"><strong>${escapeHtml(item)}</strong><button type="button" onclick="adminDeleteTemplateItem(${i})">Eliminar</button></span>`).join('') : '<small>Sin elementos.</small>'}</div></div></div>` : `<div class="templateSaveRow"><input id="optionTemplateName" placeholder="Nombre de plantilla"><button class="btn btnSecondary" type="button" onclick="adminSaveCurrentOptionTemplate('${type}')">Crear plantilla</button></div>`}<div class="templateList">${templates.length ? templates.map(t => `<div class="templateItem"><div><strong>${escapeHtml(t.name)}</strong><small>${escapeHtml((type === 'colors' ? t.items.map(colorName) : t.items).join(', '))}</small></div><div><button class="btnTiny" type="button" onclick="adminApplyOptionTemplate('${type}', ${t.id})">Aplicar</button><button class="btnTiny" type="button" onclick="adminEditOptionTemplate('${type}', ${t.id})">Editar</button><button class="btnTiny danger" type="button" onclick="adminDeleteOptionTemplate('${type}', ${t.id})">Eliminar</button></div></div>`).join('') : '<div class="emptyState"><strong>Sin resultados</strong><p>Crea una plantilla con la selección actual o cambia la búsqueda.</p></div>'}</div>`;
+}
+function adminSearchOptionTemplates(value) {
+  if (!state.adminOptionDraft) return;
+  state.adminOptionDraft.templateSearch = value || '';
+  adminRenderOptionTemplates();
+}
+function currentOptionItems(type) {
+  const draft = state.adminOptionDraft;
+  return draft?.editingTemplateId ? (draft?.templateItems || []) : (type === 'colors' ? (draft?.colors || []) : (draft?.sizes || []));
+}
+async function adminSaveCurrentOptionTemplate(type) {
+  const name = document.getElementById('optionTemplateName')?.value.trim();
+  const items = currentOptionItems(type);
+  try {
+    await DemoStore.saveOptionTemplate(type, { id: state.adminOptionDraft?.editingTemplateId || 0, name, items });
+  if (state.adminOptionDraft) {
+      state.adminOptionDraft.editingTemplateId = 0;
+      state.adminOptionDraft.templateItems = [];
+      state.adminOptionDraft.templateItemsLoaded = false;
+    }
+    showToast('Plantilla guardada');
+    await adminRenderOptionTemplates();
+  } catch (e) { showToast(e.message || 'No se pudo guardar la plantilla', 'error'); }
+}
+async function adminApplyOptionTemplate(type, id) {
+  const template = (await DemoStore.listOptionTemplates(type)).find(t => Number(t.id) === Number(id));
+  if (!template || !state.adminOptionDraft) return;
+  if (type === 'colors') state.adminOptionDraft.colors = template.items.map(normalizeColorOption).filter(c => c.name);
+  else state.adminOptionDraft.sizes = template.items.map(s => String(s || '').trim()).filter(Boolean);
+  adminRenderOptionEditors();
+  adminCloseOptionTemplates();
+  showToast('Plantilla aplicada');
+}
+function adminEditOptionTemplate(type, id) {
+  if (!state.adminOptionDraft) return;
+  state.adminOptionDraft.templateType = type;
+  state.adminOptionDraft.editingTemplateId = Number(id);
+  state.adminOptionDraft.templateItems = [];
+  state.adminOptionDraft.templateItemsLoaded = false;
+  adminRenderOptionTemplates();
+}
+async function adminCancelTemplateEdit() {
+  if (!state.adminOptionDraft) return;
+  state.adminOptionDraft.editingTemplateId = 0;
+  state.adminOptionDraft.templateItems = [];
+  state.adminOptionDraft.templateItemsLoaded = false;
+  await adminRenderOptionTemplates();
+}
+async function adminDeleteOptionTemplate(type, id) {
+  if (!confirm('¿Eliminar plantilla?')) return;
+  await DemoStore.deleteOptionTemplate(type, id);
+  if (state.adminOptionDraft?.editingTemplateId === Number(id)) {
+    state.adminOptionDraft.editingTemplateId = 0;
+    state.adminOptionDraft.templateItems = [];
+    state.adminOptionDraft.templateItemsLoaded = false;
+  }
+  await adminRenderOptionTemplates();
+}
+
+function adminAddTemplateItem(type) {
+  const draft = state.adminOptionDraft;
+  if (!draft) return;
+  if (type === 'colors') {
+    const name = document.getElementById('template-color-name')?.value.trim();
+    const hex = document.getElementById('template-color-hex')?.value || '#171717';
+    if (!name) return showToast('Escribe el nombre del color', 'error');
+    draft.templateItems = draft.templateItems || [];
+    draft.templateItems.push({ name, hex });
+    const nameEl = document.getElementById('template-color-name'); if (nameEl) nameEl.value = '';
+    const hexEl = document.getElementById('template-color-hex'); if (hexEl) hexEl.value = '#171717';
+  } else {
+    const name = document.getElementById('template-size-name')?.value.trim();
+    if (!name) return showToast('Escribe la talla', 'error');
+    draft.templateItems = draft.templateItems || [];
+    draft.templateItems.push(name);
+    const nameEl = document.getElementById('template-size-name'); if (nameEl) nameEl.value = '';
+  }
+  adminRenderOptionTemplates();
+}
+
+function adminDeleteTemplateItem(index) {
+  const draft = state.adminOptionDraft;
+  if (!draft) return;
+  draft.templateItems.splice(index, 1);
+  adminRenderOptionTemplates();
+}
 function adminUpdateAiHint() {
   const hint = document.getElementById('pf-ai-hint');
   if (!hint) return;
@@ -875,8 +1106,8 @@ async function adminSaveProduct(id) {
     price: Number(document.getElementById('pf-price').value),
     compare_price: Number(document.getElementById('pf-compare').value) || null,
     image,
-    sizes: JSON.stringify(document.getElementById('pf-sizes').value.split(',').map(s => s.trim()).filter(Boolean)),
-    colors: JSON.stringify(document.getElementById('pf-colors').value.split(',').map(s => s.trim()).filter(Boolean)),
+    sizes: document.getElementById('pf-sizes').value || '[]',
+    colors: document.getElementById('pf-colors').value || '[]',
     tags: JSON.stringify(document.getElementById('pf-tags').value.split(',').map(s => s.trim()).filter(Boolean)),
     gender: document.getElementById('pf-gender').value,
     stock: Number(document.getElementById('pf-stock').value),
@@ -1005,14 +1236,16 @@ async function adminToggleProduct(id, active) {
   const nextActive = !!active;
   const row = document.querySelector(`#adminProductsTable tbody tr[data-product-id="${id}"]`);
   const activeCell = row?.children?.[6];
-  const actionBtn = row?.querySelectorAll('button.btnTiny')?.[1];
+  const actionBtn = row?.querySelector('.adminToggleBtn');
   const product = window._adminProducts?.find(p => Number(p.id) === Number(id));
   const prevActive = product?.active;
 
   if (row) row.dataset.active = nextActive ? '1' : '0';
   if (activeCell) activeCell.textContent = nextActive ? 'Sí' : 'No';
   if (actionBtn) {
-    actionBtn.textContent = nextActive ? 'Ocultar' : 'Activar';
+    actionBtn.innerHTML = adminActionIcon(nextActive ? 'hide' : 'show');
+    actionBtn.setAttribute('aria-label', nextActive ? 'Ocultar producto' : 'Activar producto');
+    actionBtn.setAttribute('title', nextActive ? 'Ocultar producto' : 'Activar producto');
     actionBtn.setAttribute('onclick', `adminToggleProduct(${id}, ${nextActive ? 0 : 1})`);
   }
   if (product) product.active = nextActive;
