@@ -162,106 +162,110 @@ function showToast(message, type = 'success') {
   setTimeout(() => el.remove(), 3200);
 }
 
-function markdownInline(text) {
-  const safeLinks = [];
+function inline(text) {
   let out = escapeHtml(String(text || ''));
-  out = out.replace(/```([^`]+)```/g, (_, code) => `<code>${code}</code>`);
   out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
-  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+|\/[^\s)]*)\)/g, (_, label, href) => {
-    const id = safeLinks.push({ label, href }) - 1;
-    return `__LINK_${id}__`;
-  });
   out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  out = out.replace(/__([^_]+)__/g, '<strong>$1</strong>');
-  out = out.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>');
-  out = out.replace(/(?<!_)_([^_\n]+)_(?!_)/g, '<em>$1</em>');
-  out = out.replace(/__LINK_(\d+)__/g, (_, n) => {
-    const link = safeLinks[Number(n)];
-    return link ? `<a href="${escapeHtml(link.href)}" target="_blank" rel="noopener">${escapeHtml(link.label)}</a>` : '';
-  });
+  out = out.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
   return out;
 }
 
-function markdownToHtml(md) {
-  const lines = String(md || '').replace(/\r\n/g, '\n').split('\n');
+function renderMarkdown(value) {
+  const lines = String(value || '').replace(/\r\n/g, '\n').split('\n');
   const blocks = [];
-  let i = 0;
+  let paragraph = [];
+  let inList = false;
+  let listTag = '';
+  let tableRows = [];
 
-  const pushParagraph = (buffer) => {
-    const text = buffer.map(line => line.trim()).filter(Boolean).join(' ');
-    if (text) blocks.push(`<p>${markdownInline(text)}</p>`);
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    const text = paragraph.map(line => line.trim()).filter(Boolean).join(' ');
+    if (text) blocks.push(`<p>${inline(text)}</p>`);
+    paragraph = [];
   };
 
-  while (i < lines.length) {
-    const line = lines[i];
-    const trimmed = line.trim();
+  const flushList = () => {
+    if (!inList) return;
+    blocks.push(`</${listTag}>`);
+    inList = false;
+    listTag = '';
+  };
 
-    if (!trimmed) {
-      i += 1;
+  const splitTableCell = cell => cell.trim();
+  const isTableRow = line => /^\|.*\|$/.test(line.trim());
+  const isDividerRow = line => /^\|?(\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?$/.test(line.trim());
+
+  const flushTable = () => {
+    if (!tableRows.length) return;
+    const rows = tableRows.slice();
+    tableRows = [];
+    const header = rows[0] || '';
+    const separatorIndex = rows.findIndex((row, idx) => idx > 0 && isDividerRow(row));
+    const bodyStart = separatorIndex >= 0 ? separatorIndex + 1 : 1;
+    const headCells = header.split('|').map(splitTableCell).filter(Boolean);
+    const bodyRows = rows.slice(bodyStart).filter(isTableRow).map(row => row.split('|').map(splitTableCell).filter(Boolean));
+    blocks.push(`<table><thead><tr>${headCells.map(cell => `<th>${inline(cell)}</th>`).join('')}</tr></thead><tbody>${bodyRows.map(row => `<tr>${row.map(cell => `<td>${inline(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table>`);
+  };
+
+  const startList = type => {
+    if (inList && listTag !== type) flushList();
+    if (!inList) {
+      listTag = type;
+      blocks.push(`<${listTag}>`);
+      inList = true;
+    }
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    const bullet = line.match(/^[-*]\s+(.*)$/);
+    const ordered = line.match(/^\d+\.\s+(.*)$/);
+
+    if (!line) {
+      flushParagraph();
+      flushList();
+      flushTable();
       continue;
     }
 
-    if (trimmed.startsWith('```')) {
-      const code = [];
-      i += 1;
-      while (i < lines.length && !lines[i].trim().startsWith('```')) {
-        code.push(lines[i]);
-        i += 1;
-      }
-      if (i < lines.length) i += 1;
-      blocks.push(`<pre><code>${escapeHtml(code.join('\n'))}</code></pre>`);
+    if (isTableRow(line)) {
+      flushParagraph();
+      flushList();
+      tableRows.push(line);
       continue;
     }
 
-    const heading = trimmed.match(/^(#{1,6})\s+(.*)$/);
-    if (heading) {
-      const level = heading[1].length;
-      blocks.push(`<h${level}>${markdownInline(heading[2])}</h${level}>`);
-      i += 1;
+    if (tableRows.length) flushTable();
+
+    if (bullet || ordered) {
+      flushParagraph();
+      startList(ordered ? 'ol' : 'ul');
+      blocks.push(`<li>${inline((bullet || ordered)[1])}</li>`);
       continue;
     }
 
-    if (/^\|/.test(trimmed) && i + 1 < lines.length && /^\|?\s*:?[-]{3,}:?/.test(lines[i + 1].trim())) {
-      const rows = [];
-      while (i < lines.length && /^\|/.test(lines[i].trim())) {
-        rows.push(lines[i].trim());
-        i += 1;
-      }
-      const headCells = rows[0].split('|').map(c => c.trim()).filter(Boolean);
-      const bodyRows = rows.slice(2).map(row => row.split('|').map(c => c.trim()).filter(Boolean));
-      blocks.push(`<table><thead><tr>${headCells.map(cell => `<th>${markdownInline(cell)}</th>`).join('')}</tr></thead><tbody>${bodyRows.map(row => `<tr>${row.map(cell => `<td>${markdownInline(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table>`);
-      continue;
-    }
-
-    if (/^[-*+]\s+/.test(trimmed)) {
-      const items = [];
-      while (i < lines.length && /^[-*+]\s+/.test(lines[i].trim())) {
-        items.push(lines[i].trim().replace(/^[-*+]\s+/, ''));
-        i += 1;
-      }
-      blocks.push(`<ul>${items.map(item => `<li>${markdownInline(item)}</li>`).join('')}</ul>`);
-      continue;
-    }
-
-    if (/^\d+\.\s+/.test(trimmed)) {
-      const items = [];
-      while (i < lines.length && /^\d+\.\s+/.test(lines[i].trim())) {
-        items.push(lines[i].trim().replace(/^\d+\.\s+/, ''));
-        i += 1;
-      }
-      blocks.push(`<ol>${items.map(item => `<li>${markdownInline(item)}</li>`).join('')}</ol>`);
-      continue;
-    }
-
-    const paragraph = [];
-    while (i < lines.length && lines[i].trim() && !/^(#{1,6})\s+/.test(lines[i].trim()) && !/^```/.test(lines[i].trim()) && !/^\|/.test(lines[i].trim()) && !/^[-*+]\s+/.test(lines[i].trim()) && !/^\d+\.\s+/.test(lines[i].trim())) {
-      paragraph.push(lines[i]);
-      i += 1;
-    }
-    pushParagraph(paragraph);
+    flushList();
+    paragraph.push(rawLine);
   }
 
-  return blocks.join('') || `<p>${escapeHtml(String(md || ''))}</p>`;
+  flushParagraph();
+  flushList();
+  flushTable();
+  return blocks.join('') || `<p>${inline(String(value || ''))}</p>`;
+}
+
+function markdownToHtml(md) {
+  return renderMarkdown(md);
+}
+
+function appendMarkdownChunk(el, chunk) {
+  if (!el) return '';
+  const raw = `${el.dataset.raw || ''}${String(chunk || '')}`;
+  el.dataset.raw = raw;
+  const html = renderMarkdown(raw);
+  el.innerHTML = html;
+  return raw;
 }
 
 async function loadUser() {
@@ -1285,7 +1289,7 @@ function cancelChatRequest() {
   state.chatAbortController = null;
   clearInterval(state.chatTypingTimer);
   state.chatTypingTimer = null;
-  state.chatTypingEl?.remove();
+  if (state.chatTypingEl?.classList.contains('typing')) state.chatTypingEl.remove();
   state.chatTypingEl = null;
   if (state.chatStatusEl) state.chatStatusEl.style.display = 'none';
   setChatBusy(false);
@@ -1326,12 +1330,13 @@ async function sendChat(e) {
 }
 
 async function sendChatMessage(msg) {
-  const context = await DemoStore?.getAiContext?.(msg, { privateContext: state.user?.role === 'admin' }) || '';
-  return sendChatMessageWithContext(msg, context, { showUserMessage: true, loadingText: 'Pensando...' });
+  const privateContext = state.user?.role === 'admin';
+  const context = await DemoStore?.getAiContext?.(msg, { privateContext }) || '';
+  return sendChatMessageWithContext(msg, context, { showUserMessage: true, loadingText: 'Pensando...', mode: privateContext ? 'admin' : 'public' });
 }
 
 async function sendChatMessageWithContext(msg, context, options = {}) {
-  const { showUserMessage = true, loadingText = 'Pensando...', displayMessage = msg } = options;
+  const { showUserMessage = true, loadingText = 'Pensando...', displayMessage = msg, mode = 'public' } = options;
   const box = document.getElementById('chatMessages');
   cancelChatRequest();
   setChatBusy(true);
@@ -1343,44 +1348,37 @@ async function sendChatMessageWithContext(msg, context, options = {}) {
       state.chatTypingEl = box.querySelector('.chatMsg.bot.typing');
     } else {
       setChatStatus(loadingText);
+      box.innerHTML += `<div class="chatMsg bot typing"></div>`;
+      state.chatTypingEl = box.querySelector('.chatMsg.bot.typing');
     }
-    const data = await api('/api/ai/chat', {
-      method: 'POST',
-      body: JSON.stringify({ message: msg, context }),
-      signal: controller.signal,
-    });
+    const response = await streamAiChatResponse(msg, context, mode, chunk => {
+      const typingEl = state.chatTypingEl;
+      if (!typingEl) return;
+      typingEl.classList.remove('typing');
+      appendMarkdownChunk(typingEl, chunk);
+      typingEl.closest('.chatMessages')?.scrollTo({ top: typingEl.closest('.chatMessages').scrollHeight, behavior: 'smooth' });
+    }, controller.signal);
     if (controller.signal.aborted) return;
-    const response = data.response || '';
-    const isStructuredResponse = data.model === 'local-table' || /^\|.+\|$/m.test(response) || response.includes('\n|---|');
     if (showUserMessage) {
       const typingEl = state.chatTypingEl;
       if (typingEl) {
         typingEl.classList.remove('typing');
-        if (isStructuredResponse) {
-          typingEl.innerHTML = markdownToHtml(response);
-          typingEl.closest('.chatMessages')?.scrollTo({ top: typingEl.closest('.chatMessages').scrollHeight, behavior: 'smooth' });
-        } else {
-          await revealChatResponse(typingEl, response, controller.signal);
-        }
+        typingEl.innerHTML = markdownToHtml(response);
         box.scrollTop = box.scrollHeight;
         await pushChatHistory('user', msg);
         await pushChatHistory('assistant', response);
+        state.chatTypingEl = null;
       }
     } else {
       setChatStatus('');
-      box.innerHTML += `<div class="chatMsg bot typing"></div>`;
-      state.chatTypingEl = box.querySelector('.chatMsg.bot.typing');
       const typingEl = state.chatTypingEl;
       if (typingEl) {
         typingEl.classList.remove('typing');
-        if (isStructuredResponse) {
-          typingEl.innerHTML = markdownToHtml(response);
-        } else {
-          await revealChatResponse(typingEl, response, controller.signal);
-        }
+        typingEl.innerHTML = markdownToHtml(response);
         box.scrollTop = box.scrollHeight;
         await pushChatHistory('user', msg);
         await pushChatHistory('assistant', response);
+        state.chatTypingEl = null;
       }
     }
   } catch (err) {
@@ -1388,7 +1386,7 @@ async function sendChatMessageWithContext(msg, context, options = {}) {
     setChatStatus('');
     state.chatTypingEl?.remove();
     state.chatTypingEl = null;
-    box.innerHTML += `<div class="chatMsg bot">Ahora mismo no puedo responder. Prueba de nuevo.</div>`;
+    box.innerHTML += `<div class="chatMsg bot">${escapeHtml(err?.message || 'Ahora mismo no puedo responder. Prueba de nuevo.')}</div>`;
     box.scrollTop = box.scrollHeight;
   } finally {
     if (state.chatAbortController === controller) state.chatAbortController = null;
@@ -1396,6 +1394,71 @@ async function sendChatMessageWithContext(msg, context, options = {}) {
     setChatStatus('');
     setChatBusy(false);
   }
+}
+
+async function streamAiChatResponse(msg, context, mode, onDelta, signal) {
+  const res = await fetch('/api/ai/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: msg, context, mode }),
+    signal,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(async () => ({ detail: await res.text().catch(() => 'Error inesperado') }));
+    throw new Error(err.detail || err.error || 'Error inesperado');
+  }
+  if (!res.body) throw new Error('No se pudo iniciar el streaming de IA.');
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let raw = '';
+  let pendingRender = false;
+  let renderTimer = 0;
+  let pendingChunk = '';
+  const flushRender = () => {
+    pendingRender = false;
+    renderTimer = 0;
+    if (pendingChunk) {
+      onDelta?.(pendingChunk, raw);
+      pendingChunk = '';
+    }
+  };
+  const scheduleRender = () => {
+    if (pendingRender) return;
+    pendingRender = true;
+    renderTimer = window.setTimeout(flushRender, 80);
+  };
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let splitIndex;
+    while ((splitIndex = buffer.indexOf('\n\n')) >= 0) {
+      const frame = buffer.slice(0, splitIndex);
+      buffer = buffer.slice(splitIndex + 2);
+      for (const line of frame.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        const payload = trimmed.slice(5).trimStart();
+        if (payload === '[DONE]') return raw;
+        let parsed;
+        try {
+          parsed = JSON.parse(payload);
+        } catch {
+          continue;
+        }
+        if (parsed?.error) throw new Error(parsed.error);
+        const piece = parsed?.choices?.[0]?.delta?.content || parsed?.delta?.content || parsed?.content || '';
+        if (piece === '</s>' || !piece) continue;
+        raw += piece;
+        pendingChunk += piece;
+        scheduleRender();
+      }
+    }
+  }
+  if (renderTimer) clearTimeout(renderTimer);
+  if (pendingChunk) onDelta?.(pendingChunk, raw);
+  return raw;
 }
 
 function revealChatResponse(el, text, signal) {
@@ -1408,6 +1471,7 @@ function revealChatResponse(el, text, signal) {
       return;
     }
     el.textContent = '';
+    el.dataset.raw = '';
     let raw = '';
     let i = 0;
     const tick = () => {
@@ -1419,7 +1483,7 @@ function revealChatResponse(el, text, signal) {
         return;
       }
       raw += tokens[i];
-      el.innerHTML = markdownToHtml(raw);
+      appendMarkdownChunk(el, tokens[i]);
       el.closest('.chatMessages')?.scrollTo({ top: el.closest('.chatMessages').scrollHeight, behavior: 'smooth' });
       i += 1;
       if (i >= tokens.length) {
@@ -1491,6 +1555,7 @@ Acciones sugeridas:
         state.chatTypingEl.classList.remove('typing');
         await revealChatResponse(state.chatTypingEl, response, null);
         box?.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+        state.chatTypingEl = null;
       }
       await pushChatHistory('user', 'Analisis con IA');
       await pushChatHistory('assistant', response);
@@ -1500,7 +1565,7 @@ Acciones sugeridas:
     await sendChatMessageWithContext(
       'Haz un análisis ejecutivo de la tienda MODE con foco en clientes, ingresos, productos más vendidos, carritos y stock. Incluye 2 o 3 oportunidades de mejora claras.',
       context,
-      { showUserMessage: true, loadingText: 'Analizando la tienda...', displayMessage: 'Analisis con IA' },
+      { showUserMessage: true, loadingText: 'Analizando la tienda...', displayMessage: 'Analisis con IA', mode: 'admin' },
     );
   } finally {
     setChatBusy(false);

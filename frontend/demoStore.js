@@ -800,6 +800,41 @@
         const err = await res.json().catch(() => ({ detail: 'Error inesperado' }));
         throw new Error(err.detail || 'Error inesperado');
       }
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('text/event-stream') && res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let response = '';
+        let model = 'deepinfra';
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let splitIndex;
+          while ((splitIndex = buffer.indexOf('\n\n')) >= 0) {
+            const frame = buffer.slice(0, splitIndex);
+            buffer = buffer.slice(splitIndex + 2);
+            for (const line of frame.split('\n')) {
+              const trimmed = line.trim();
+              if (!trimmed.startsWith('data:')) continue;
+              const payload = trimmed.slice(5).trimStart();
+              if (payload === '[DONE]') return { response, model };
+              let parsed;
+              try {
+                parsed = JSON.parse(payload);
+              } catch {
+                continue;
+              }
+              if (parsed?.error) throw new Error(parsed.error);
+              model = parsed?.model || model;
+              const piece = parsed?.choices?.[0]?.delta?.content || parsed?.delta?.content || parsed?.content || '';
+              if (piece && piece !== '</s>') response += piece;
+            }
+          }
+        }
+        return { response, model };
+      }
       return res.json();
     }
 
