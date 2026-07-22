@@ -26,7 +26,7 @@ AI_INPUT_COST_PER_1M = float(os.getenv("AI_INPUT_COST_PER_1M_TOKENS_EUR", "0.02"
 AI_OUTPUT_COST_PER_1M = float(os.getenv("AI_OUTPUT_COST_PER_1M_TOKENS_EUR", "0.03"))
 AI_MAX_COMPLETION_TOKENS = int(os.getenv("AI_MAX_COMPLETION_TOKENS", "500"))
 DEEPINFRA_API_KEY = os.getenv("DEEPINFRA_API_KEY", "").strip()
-AI_USAGE_FILE = ROOT / "data" / "ai_usage.json"
+AI_USAGE_FILE = Path(os.getenv("AI_USAGE_FILE", "/tmp/ai_usage.json" if os.getenv("VERCEL") else str(ROOT / "data" / "ai_usage.json")))
 AI_USAGE_FILE.parent.mkdir(exist_ok=True)
 AI_USAGE_LOCK = threading.Lock()
 
