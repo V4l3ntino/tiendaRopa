@@ -13,7 +13,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from transformers import AutoTokenizer
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
@@ -27,13 +26,9 @@ AI_INPUT_COST_PER_1M = float(os.getenv("AI_INPUT_COST_PER_1M_TOKENS_EUR", "0.02"
 AI_OUTPUT_COST_PER_1M = float(os.getenv("AI_OUTPUT_COST_PER_1M_TOKENS_EUR", "0.03"))
 AI_MAX_COMPLETION_TOKENS = int(os.getenv("AI_MAX_COMPLETION_TOKENS", "500"))
 DEEPINFRA_API_KEY = os.getenv("DEEPINFRA_API_KEY", "").strip()
-HF_TOKEN = os.getenv("HUGGINGFACE_HUB_TOKEN", "").strip() or None
 AI_USAGE_FILE = ROOT / "data" / "ai_usage.json"
 AI_USAGE_FILE.parent.mkdir(exist_ok=True)
 AI_USAGE_LOCK = threading.Lock()
-TOKENIZER_LOCK = threading.Lock()
-TOKENIZER_INSTANCE = None
-TOKENIZER_LOADING = False
 
 PUBLIC_SYSTEM_PROMPT = (
     "Eres el asistente de MODE. Responde en espanol, breve y directo. "
@@ -106,52 +101,11 @@ def build_user_prompt(message: str, context: str) -> str:
     return f"QUESTION:\n{message.strip()}\n\nCONTEXT:\n{clean_context}"
 
 
-def get_tokenizer():
-    global TOKENIZER_LOADING, TOKENIZER_INSTANCE
-    with TOKENIZER_LOCK:
-        if TOKENIZER_INSTANCE is not None:
-            return TOKENIZER_INSTANCE
-        if not TOKENIZER_LOADING:
-            TOKENIZER_LOADING = True
-
-            def _load() -> None:
-                global TOKENIZER_INSTANCE, TOKENIZER_LOADING
-                model_id = "meta-llama/Meta-Llama-3.1-8B-Instruct"
-                tokenizer = None
-                try:
-                    tokenizer = AutoTokenizer.from_pretrained(model_id, token=HF_TOKEN, use_fast=True)
-                except Exception:
-                    try:
-                        tokenizer = AutoTokenizer.from_pretrained(model_id, token=HF_TOKEN, use_fast=False)
-                    except Exception:
-                        tokenizer = None
-                with TOKENIZER_LOCK:
-                    TOKENIZER_INSTANCE = tokenizer
-                    TOKENIZER_LOADING = False
-
-            threading.Thread(target=_load, daemon=True).start()
-    return None
-
-
 def estimate_text_tokens(text: str) -> int:
-    tokenizer = get_tokenizer()
-    if tokenizer is not None:
-        try:
-            return len(tokenizer.encode(str(text or ""), add_special_tokens=False))
-        except Exception:
-            pass
     return max(1, math.ceil(len(str(text or "")) / 3))
 
 
 def estimate_prompt_tokens(messages: list[dict[str, str]]) -> int:
-    tokenizer = get_tokenizer()
-    if tokenizer is not None:
-        try:
-            if hasattr(tokenizer, "apply_chat_template"):
-                ids = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True)
-                return len(ids) if hasattr(ids, "__len__") else estimate_text_tokens(str(ids))
-        except Exception:
-            pass
     rendered = "\n".join(f"{m.get('role', 'user').upper()}: {m.get('content', '')}" for m in messages) + "\nASSISTANT:"
     return estimate_text_tokens(rendered)
 

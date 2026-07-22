@@ -6,5 +6,3 @@ email-validator>=2.2,<3.0
 python-dotenv>=1.0,<2.0
 openpyxl>=3.1,<4.0
 python-multipart>=0.0.18,<1.0
-transformers>=4.45,<5.0
-huggingface_hub>=0.25,<1.0
