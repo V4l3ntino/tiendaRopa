@@ -847,27 +847,81 @@ function adminShowProductModal(product = null) {
   document.getElementById('adminProductModal').style.display = 'flex';
   document.getElementById('adminModalTitle').textContent = product ? 'Editar producto' : 'Añadir producto';
   const tags = product ? parseList(product.tags).join(', ') : '';
-  document.getElementById('adminProductForm').innerHTML = `<div class="adminFormGrid">
-    <div class="formGroup"><label>Nombre *</label><input id="pf-name" value="${escapeHtml(product?.name || '')}" oninput="adminUpdateAiHint()"></div>
-    <div class="formGroup"><label>Marca</label><input id="pf-brand" value="${escapeHtml(product?.brand || '')}" oninput="adminUpdateAiHint()"></div>
-    <div class="formGroup"><label>Precio *</label><input id="pf-price" type="number" step="0.01" value="${product?.price || ''}"></div>
-    <div class="formGroup"><label>Precio anterior</label><input id="pf-compare" type="number" step="0.01" value="${product?.compare_price || ''}"></div>
-    <div class="formGroup"><label>Stock</label><input id="pf-stock" type="number" value="${product?.stock ?? 0}"></div>
-    <div class="formGroup"><label>Categoría</label><select id="pf-category" onchange="adminUpdateAiHint()">${state.categories.map(c => `<option value="${c.id}" ${product?.category_id === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}</select></div>
-  </div>
-  <div class="formGroup"><label>Descripción</label><textarea id="pf-desc">${escapeHtml(product?.description || '')}</textarea></div>
-  <div class="adminAiActions"><button class="btn btnSecondary" type="button" onclick="adminGenerateProductAi(${product?.id || 0})">Crear con IA</button><small id="pf-ai-hint">Rellena primero nombre, marca y categoría.</small></div>
-  <div class="formGroup"><label>Características</label><textarea id="pf-characteristics" placeholder="Marca:...\nCategoría:...\nGénero:...\nTags:...">${escapeHtml(product?.characteristics || '')}</textarea></div>
-  <div class="formGroup"><label>Composición y cuidados</label><textarea id="pf-composition" placeholder="Tejido...\nCuidado...">${escapeHtml(product?.composition_care || '')}</textarea></div>
-  <div class="formGroup"><label>Imagen local del producto</label><div class="imageUploadBox">${product?.image ? `<img id="pf-image-preview" src="${escapeHtml(product.image)}" alt="Preview">` : '<img id="pf-image-preview" style="display:none" alt="Preview">'}<div><input id="pf-image-file" type="file" accept="image/jpeg,image/png,image/webp,image/avif,image/gif" onchange="adminPreviewImage(this)"><small>JPG, PNG, WebP, AVIF o GIF. Se guarda en local.</small><div id="pf-image-status"></div></div></div><input type="hidden" id="pf-image" value="${escapeHtml(product?.image || '')}"></div>
-  <div class="optionEditorGrid">
-    <section class="optionEditor"><div class="optionEditorHeader"><div><label>Tallas</label><small>Añade una talla por nombre.</small></div><button class="btnTiny" type="button" onclick="adminOpenOptionTemplates('sizes')">Listar plantillas</button></div><div class="optionInputRow"><input id="pf-size-name" placeholder="Ej: M, XL, 42"><button class="btn btnSecondary" id="pf-size-add" type="button" onclick="adminAddSizeOption()">Añadir</button></div><div class="optionChipList" id="pf-size-list"></div><input type="hidden" id="pf-sizes"></section>
-    <section class="optionEditor"><div class="optionEditorHeader"><div><label>Colores</label><small>Nombre + color RGB.</small></div><button class="btnTiny" type="button" onclick="adminOpenOptionTemplates('colors')">Listar plantillas</button></div><div class="optionInputRow colorRow"><input id="pf-color-name" placeholder="Ej: Negro"><input id="pf-color-hex" type="color" value="#171717"><button class="btn btnSecondary" id="pf-color-add" type="button" onclick="adminAddColorOption()">Añadir</button></div><div class="optionChipList" id="pf-color-list"></div><input type="hidden" id="pf-colors"></section>
+  const categoryName = product?.category_name || state.categories.find(c => Number(c.id) === Number(product?.category_id))?.name || 'Categoría';
+  const productName = product?.name || 'Nuevo producto';
+  const productBrand = product?.brand || 'MODE';
+  const productPrice = Number(product?.price || 0);
+  const comparePrice = Number(product?.compare_price || 0);
+  const discount = comparePrice && productPrice ? Math.max(0, Math.round((1 - productPrice / comparePrice) * 100)) : 0;
+  document.getElementById('adminProductForm').innerHTML = `<div class="productEditorLayout">
+    <aside class="productEditorPreview">
+      <div class="editorPreviewHeader">
+        <span>Vista catálogo</span>
+        <strong>${escapeHtml(product ? 'Editando' : 'Nuevo')}</strong>
+      </div>
+      <div class="editorProductMock">
+        <div class="editorProductImage">
+          ${product?.image ? `<img id="pf-image-preview" src="${escapeHtml(product.image)}" alt="Preview">` : '<img id="pf-image-preview" style="display:none" alt="Preview">'}
+          <div class="editorImageEmpty" id="pf-image-empty" ${product?.image ? 'style="display:none"' : ''}>Añade una imagen</div>
+          ${discount ? `<span class="editorSaleBadge">-${discount}%</span>` : ''}
+        </div>
+        <div class="editorProductInfo">
+          <span id="editor-preview-brand">${escapeHtml(productBrand)}</span>
+          <strong id="editor-preview-name">${escapeHtml(productName)}</strong>
+          <small id="editor-preview-category">${escapeHtml(categoryName)}</small>
+          <div class="editorPriceRow"><b id="editor-preview-price">${productPrice ? productPrice.toFixed(2) : '0.00'} €</b><em id="editor-preview-compare" ${comparePrice ? '' : 'style="display:none"'}>${comparePrice ? `${comparePrice.toFixed(2)} €` : ''}</em></div>
+        </div>
+      </div>
+      <label class="imageUploadBox" for="pf-image-file">
+        <input id="pf-image-file" type="file" accept="image/jpeg,image/png,image/webp,image/avif,image/gif" onchange="adminPreviewImage(this)">
+        <span class="uploadIcon">+</span>
+        <strong>${product?.image ? 'Cambiar imagen' : 'Subir imagen'}</strong>
+        <small>JPG, PNG, WebP, AVIF o GIF. Se guarda en local.</small>
+        <span id="pf-image-status">${product?.image ? 'Imagen actual del producto' : 'Ninguna imagen seleccionada'}</span>
+      </label>
+      <input type="hidden" id="pf-image" value="${escapeHtml(product?.image || '')}">
+    </aside>
+    <div class="productEditorFields">
+      <section class="editorSection">
+        <div class="editorSectionHead"><span>01</span><h4>Información básica</h4></div>
+        <div class="adminFormGrid">
+          <div class="formGroup"><label>Nombre *</label><input id="pf-name" value="${escapeHtml(product?.name || '')}" oninput="adminUpdateAiHint(); adminUpdateProductPreview()"></div>
+          <div class="formGroup"><label>Marca</label><input id="pf-brand" value="${escapeHtml(product?.brand || '')}" oninput="adminUpdateAiHint(); adminUpdateProductPreview()"></div>
+          <div class="formGroup"><label>Categoría</label><select id="pf-category" onchange="adminUpdateAiHint(); adminUpdateProductPreview()">${state.categories.map(c => `<option value="${c.id}" ${product?.category_id === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}</select></div>
+          <div class="formGroup"><label>Género</label><select id="pf-gender">${['unisex','hombre','mujer'].map(g => `<option ${product?.gender === g ? 'selected' : ''}>${g}</option>`).join('')}</select></div>
+        </div>
+      </section>
+      <section class="editorSection">
+        <div class="editorSectionHead"><span>02</span><h4>Precio y stock</h4></div>
+        <div class="adminFormGrid compact">
+          <div class="formGroup"><label>Precio *</label><input id="pf-price" type="number" step="0.01" value="${product?.price || ''}" oninput="adminUpdateProductPreview()"></div>
+          <div class="formGroup"><label>Precio anterior</label><input id="pf-compare" type="number" step="0.01" value="${product?.compare_price || ''}" oninput="adminUpdateProductPreview()"></div>
+          <div class="formGroup"><label>Stock</label><input id="pf-stock" type="number" value="${product?.stock ?? 0}"></div>
+          <div class="formGroup"><label>Tags</label><input id="pf-tags" value="${escapeHtml(tags)}" placeholder="nuevo, popular, oferta"></div>
+        </div>
+      </section>
+      <section class="editorSection">
+        <div class="editorSectionHead"><span>03</span><h4>Contenido comercial</h4></div>
+        <div class="formGroup"><label>Descripción</label><textarea id="pf-desc">${escapeHtml(product?.description || '')}</textarea></div>
+        <div class="adminAiActions"><button class="btn btnSecondary" type="button" onclick="adminGenerateProductAi(${product?.id || 0})">Crear con IA</button><small id="pf-ai-hint">Rellena primero nombre, marca y categoría.</small></div>
+        <div class="formGroup"><label>Características</label><textarea id="pf-characteristics" placeholder="Marca:...\nCategoría:...\nGénero:...\nTags:...">${escapeHtml(product?.characteristics || '')}</textarea></div>
+        <div class="formGroup"><label>Composición y cuidados</label><textarea id="pf-composition" placeholder="Tejido...\nCuidado...">${escapeHtml(product?.composition_care || '')}</textarea></div>
+      </section>
+      <section class="editorSection">
+        <div class="editorSectionHead"><span>04</span><h4>Variantes</h4></div>
+        <div class="optionEditorGrid">
+          <section class="optionEditor"><div class="optionEditorHeader"><div><label>Tallas</label><small>Añade una talla por nombre.</small></div><button class="btnTiny" type="button" onclick="adminOpenOptionTemplates('sizes')">Usar plantilla</button></div><div class="optionInputRow"><input id="pf-size-name" placeholder="Ej: M, XL, 42"><button class="btn btnSecondary" id="pf-size-add" type="button" onclick="adminAddSizeOption()">Añadir</button></div><div class="optionChipList sizeChipList" id="pf-size-list"></div><input type="hidden" id="pf-sizes"></section>
+          <section class="optionEditor"><div class="optionEditorHeader"><div><label>Colores</label><small>Nombre + color RGB.</small></div><button class="btnTiny" type="button" onclick="adminOpenOptionTemplates('colors')">Usar plantilla</button></div><div class="optionInputRow colorRow"><input id="pf-color-name" placeholder="Ej: Negro"><input id="pf-color-hex" type="color" value="#171717"><button class="btn btnSecondary" id="pf-color-add" type="button" onclick="adminAddColorOption()">Añadir</button></div><div class="optionChipList" id="pf-color-list"></div><input type="hidden" id="pf-colors"></section>
+        </div>
+      </section>
+      <section class="editorSection">
+        <div class="editorSectionHead"><span>05</span><h4>Visibilidad</h4></div>
+        <div class="checkRow productStatusRow"><label><input id="pf-active" type="checkbox" ${!product || product.active ? 'checked' : ''}> <span>Activo</span></label><label><input id="pf-featured" type="checkbox" ${product?.featured ? 'checked' : ''}> <span>Destacado</span></label><label><input id="pf-sale" type="checkbox" ${product?.on_sale ? 'checked' : ''}> <span>Oferta</span></label></div>
+      </section>
+    </div>
   </div>
   <div class="templatePopupOverlay" id="optionTemplatePopup" style="display:none" onclick="if(event.target.id==='optionTemplatePopup') adminCloseOptionTemplates()"><div class="templatePopup" onclick="event.stopPropagation()" id="optionTemplatePanel"></div></div>
-  <div class="adminFormGrid"><div class="formGroup"><label>Tags</label><input id="pf-tags" value="${escapeHtml(tags)}"></div><div class="formGroup"><label>Género</label><select id="pf-gender">${['unisex','hombre','mujer'].map(g => `<option ${product?.gender === g ? 'selected' : ''}>${g}</option>`).join('')}</select></div></div>
-  <div class="checkRow"><label><input id="pf-active" type="checkbox" ${!product || product.active ? 'checked' : ''}> Activo</label><label><input id="pf-featured" type="checkbox" ${product?.featured ? 'checked' : ''}> Destacado</label><label><input id="pf-sale" type="checkbox" ${product?.on_sale ? 'checked' : ''}> Oferta</label></div>
-  <div class="modalActions"><button class="btn btnSecondary" onclick="adminCloseProductModal()">Cancelar</button><button class="btn btnPrimary" onclick="adminSaveProduct(${product?.id || 0})">${product ? 'Guardar cambios' : 'Crear producto'}</button></div>`;
+  <div class="modalActions editorActions"><span>${product ? 'Revisa los cambios antes de guardar.' : 'Completa los campos obligatorios para publicar.'}</span><div><button class="btn btnSecondary" onclick="adminCloseProductModal()">Cancelar</button><button class="btn btnPrimary" onclick="adminSaveProduct(${product?.id || 0})">${product ? 'Guardar cambios' : 'Crear producto'}</button></div></div>`;
   adminInitOptionEditors(product);
   adminUpdateAiHint();
 }
@@ -1081,11 +1135,30 @@ function adminUpdateAiHint() {
     hint.textContent = '';
   }
 }
+function adminUpdateProductPreview() {
+  const nameEl = document.getElementById('editor-preview-name');
+  const brandEl = document.getElementById('editor-preview-brand');
+  const categoryEl = document.getElementById('editor-preview-category');
+  const priceEl = document.getElementById('editor-preview-price');
+  const compareEl = document.getElementById('editor-preview-compare');
+  if (nameEl) nameEl.textContent = document.getElementById('pf-name')?.value.trim() || 'Nuevo producto';
+  if (brandEl) brandEl.textContent = document.getElementById('pf-brand')?.value.trim() || 'MODE';
+  if (categoryEl) categoryEl.textContent = document.getElementById('pf-category')?.selectedOptions?.[0]?.textContent || 'Categoría';
+  const price = Number(document.getElementById('pf-price')?.value || 0);
+  const compare = Number(document.getElementById('pf-compare')?.value || 0);
+  if (priceEl) priceEl.textContent = `${price ? price.toFixed(2) : '0.00'} €`;
+  if (compareEl) {
+    compareEl.textContent = compare ? `${compare.toFixed(2)} €` : '';
+    compareEl.style.display = compare ? '' : 'none';
+  }
+}
 function adminPreviewImage(input) {
   const preview = document.getElementById('pf-image-preview');
+  const empty = document.getElementById('pf-image-empty');
   if (!input.files?.length) return;
   preview.src = URL.createObjectURL(input.files[0]);
   preview.style.display = 'block';
+  if (empty) empty.style.display = 'none';
   document.getElementById('pf-image-status').textContent = `${input.files[0].name} pendiente de guardar`;
 }
 async function adminUploadImage(file) {
