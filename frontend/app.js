@@ -120,6 +120,13 @@ function isAppRoute(path) {
     || path === '/admin';
 }
 
+function getSafeNextPath() {
+  const next = new URLSearchParams(location.search).get('next') || '';
+  const path = sameOriginPath(next);
+  if (!path || path === '/login' || path.startsWith('/login?')) return '';
+  return isAppRoute(new URL(path, location.href).pathname) ? path : '';
+}
+
 async function api(url, options = {}) {
   const headers = options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' };
   const sep = url.includes('?') ? '&' : '?';
@@ -686,7 +693,8 @@ function renderLogin() {
     state.user = user;
     await DemoStore?.setSessionToken?.(user.token);
     showToast('Sesión iniciada');
-    navigate(user.role === 'admin' ? '/admin' : '/catalogo');
+    const next = getSafeNextPath();
+    navigate(next && (next !== '/admin' || user.role === 'admin') ? next : user.role === 'admin' ? '/admin' : '/catalogo');
   };
 }
 
@@ -705,7 +713,7 @@ function cap(s) { return String(s || '').charAt(0).toUpperCase() + String(s || '
 function statusLabel(s) { return ({ pending: 'Pendiente', paid: 'Pagado', shipped: 'Enviado', delivered: 'Entregado', cancelled: 'Cancelado' })[s] || s; }
 
 async function renderAdmin() {
-  if (state.user?.role !== 'admin') return navigate('/');
+  if (state.user?.role !== 'admin') return navigate('/login?next=/admin');
   const dashboard = await api('/api/admin/dashboard');
   state.adminDashboard = dashboard;
   appEl.innerHTML = `<section class="adminPage"><h1 class="pageTitle">Panel de administración</h1>

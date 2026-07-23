@@ -245,7 +245,11 @@ img { max-width: 100%; display: block; }
 .adminModalHeader button { border: 0; background: transparent; font-size: 28px; cursor: pointer; }
 .adminModalBody { padding: 0; }
 .adminFormGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.adminFormGrid.compact { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.adminFormGrid.compact { grid-template-columns: minmax(92px, .85fr) minmax(120px, 1fr) minmax(76px, .65fr) minmax(150px, 1.25fr); }
+.adminFormGrid > .formGroup { min-width: 0; }
+.adminFormGrid .formGroup input,
+.adminFormGrid .formGroup select,
+.adminFormGrid .formGroup textarea { width: 100%; min-width: 0; }
 .adminAiActions { display: flex; align-items: center; gap: 12px; margin: 8px 0 14px; flex-wrap: wrap; }
 .adminAiActions small { color: var(--ink3); font-size: 12px; }
 .adminModalBody textarea { min-height: 110px; }

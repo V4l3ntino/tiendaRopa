@@ -87,6 +87,16 @@
     return typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value));
   }
 
+  function tokenId() {
+    if (globalThis.crypto?.randomUUID) return crypto.randomUUID().replace(/-/g, '');
+    const bytes = new Uint8Array(16);
+    if (globalThis.crypto?.getRandomValues) {
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+    }
+    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+  }
+
   function listValue(value) {
     if (Array.isArray(value)) return value;
     if (typeof value === 'string') {
@@ -840,7 +850,7 @@
 
     if (path === '/api/auth/register' && method === 'POST') {
       if (state.users.some(u => u.email.toLowerCase() === String(body.email || '').toLowerCase())) throw new Error('El email ya está registrado');
-      const user = { id: state.nextIds.user++, name: body.name, email: body.email, phone: body.phone || '', role: 'user', password: body.password, token: `tok_${crypto.randomUUID().replace(/-/g, '')}`, created_at: new Date().toISOString() };
+      const user = { id: state.nextIds.user++, name: body.name, email: body.email, phone: body.phone || '', role: 'user', password: body.password, token: `tok_${tokenId()}`, created_at: new Date().toISOString() };
       state.users.push(user);
       state.sessionToken = user.token;
       await save();
@@ -849,7 +859,7 @@
     if (path === '/api/auth/login' && method === 'POST') {
       const user = state.users.find(u => u.email.toLowerCase() === String(body.email || '').toLowerCase() && u.password === body.password);
       if (!user) throw new Error('Credenciales incorrectas');
-      user.token = `tok_${crypto.randomUUID().replace(/-/g, '')}`;
+      user.token = `tok_${tokenId()}`;
       state.sessionToken = user.token;
       await save();
       return { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role, token: user.token };
