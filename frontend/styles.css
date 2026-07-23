@@ -280,22 +280,30 @@ img { max-width: 100%; display: block; }
 .optionEditorHeader label { display: block; font-weight: 900; margin-bottom: 3px; }
 .optionEditorHeader small { color: var(--ink3); font-size: 12px; }
 .optionInputRow { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
-.optionInputRow.colorRow { grid-template-columns: 1fr 46px auto; }
+.optionInputRow.colorRow { grid-template-columns: minmax(0, 1fr) 46px auto; }
 .optionInputRow input[type="color"] { height: 42px; min-width: 46px; padding: 4px; cursor: pointer; }
 .optionChipList { display: flex; flex-wrap: wrap; gap: 8px; min-height: 36px; align-items: center; }
-.optionChip { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--border); background: white; border-radius: 999px; padding: 7px 9px; font-size: 13px; }
-.optionChip button { border: 0; background: transparent; color: var(--accent); cursor: pointer; font-size: 12px; font-weight: 900; padding: 0; }
+.optionChip { display: inline-flex; align-items: center; max-width: 100%; gap: 7px; border: 1px solid var(--border); background: white; border-radius: 999px; padding: 7px 8px 7px 10px; font-size: 13px; }
+.optionChip strong { min-width: 0; overflow-wrap: anywhere; }
+.optionRemoveBtn { display: inline-grid; width: 20px; height: 20px; flex: 0 0 20px; place-items: center; border: 0; border-radius: 50%; background: #f6f1ea; color: var(--ink2); cursor: pointer; font-size: 16px; line-height: 1; font-weight: 900; padding: 0; }
+.optionRemoveBtn:hover { background: var(--accent); color: white; }
 .optionChip small { color: var(--ink3); }
+.optionColorList { display: grid; gap: 8px; min-height: 36px; }
+.optionColorItem { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto 20px; gap: 8px; align-items: center; border: 1px solid var(--border); border-radius: 12px; background: white; padding: 8px 9px; font-size: 13px; }
+.optionColorItem strong { min-width: 0; overflow-wrap: anywhere; }
+.optionColorItem small { color: var(--ink3); font-variant-numeric: tabular-nums; }
 .miniSwatch { width: 16px; height: 16px; border-radius: 50%; border: 1px solid rgba(0,0,0,.18); display: inline-block; }
 .templatePopupOverlay { position: fixed; inset: 0; z-index: 260; background: rgba(0,0,0,.46); align-items: center; justify-content: center; padding: 18px; }
-.templatePopup { width: min(760px, 100%); max-height: min(720px, calc(100vh - 38px)); overflow: auto; border: 1px solid var(--border); border-radius: 20px; background: linear-gradient(180deg, #fff, #fbf8f4); padding: 16px; box-shadow: var(--shadow); }
+.templatePopup { width: min(820px, 100%); max-height: min(720px, calc(100vh - 38px)); overflow: auto; border: 1px solid var(--border); border-radius: 20px; background: linear-gradient(180deg, #fff, #fbf8f4); padding: 16px; box-shadow: var(--shadow); }
 .templatePanel { border: 1px solid var(--border); border-radius: 18px; background: linear-gradient(180deg, #fff, #fbf8f4); padding: 14px; margin: 12px 0; box-shadow: 0 12px 28px rgba(0,0,0,.05); }
 .templatePanelHeader { display: flex; align-items: start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .templatePanelHeader strong { display: block; }
 .templatePanelHeader small { display: block; color: var(--ink3); margin-top: 4px; }
 .templatePanelHeader button { border: 0; background: transparent; font-size: 24px; cursor: pointer; }
-.templateSearchRow { margin-bottom: 10px; }
-.templateSearchRow input { width: 100%; }
+.templateTabs { display: inline-grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border: 1px solid var(--border); border-radius: 12px; background: #f6f1ea; margin-bottom: 12px; }
+.templateTab { border: 0; border-radius: 9px; background: transparent; color: var(--ink2); cursor: pointer; font-weight: 900; padding: 9px 18px; }
+.templateTab.active { background: var(--ink); color: white; }
+.templateToolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
 .templateSaveRow { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-bottom: 12px; }
 .templateEditor { border: 1px solid var(--border); border-radius: 16px; background: #fff; padding: 12px; margin-bottom: 12px; display: grid; gap: 10px; }
 .templateEditorHeader { display: flex; justify-content: space-between; gap: 10px; align-items: start; }
@@ -303,9 +311,19 @@ img { max-width: 100%; display: block; }
 .templateEditorHeader small { color: var(--ink3); display: block; margin-top: 4px; }
 .templateSubEditor { display: grid; gap: 10px; }
 .templateList { display: grid; gap: 9px; }
-.templateItem { display: flex; justify-content: space-between; gap: 12px; align-items: center; border: 1px solid var(--border); border-radius: 14px; background: white; padding: 10px 12px; }
-.templateItem small { display: block; color: var(--ink3); margin-top: 4px; }
-.templateItem > div:last-child { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.templateItem { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; border: 1px solid var(--border); border-radius: 14px; background: white; padding: 12px; }
+.templateItem small { display: block; color: var(--ink3); margin-top: 4px; line-height: 1.45; }
+.templateItemValues { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 6px; }
+.templateColorPill { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 999px; padding: 5px 8px; font-size: 12px; }
+.templateColorPill small { margin: 0; font-variant-numeric: tabular-nums; }
+.templateItemActions { display: grid; grid-template-columns: auto auto 34px 34px; gap: 6px; align-items: center; justify-content: end; }
+.templateApplyChoice { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: flex-end; color: var(--ink2); font-size: 12px; font-weight: 800; }
+.templateApplyChoice label { display: inline-flex; align-items: center; gap: 4px; }
+.templateApplyBtn { background: var(--ink); color: white; }
+.btnIcon { display: inline-grid; width: 34px; height: 34px; place-items: center; border: 1px solid var(--border); border-radius: 10px; background: white; color: var(--ink2); cursor: pointer; font-size: 16px; font-weight: 900; line-height: 1; }
+.btnIcon:hover { border-color: var(--ink2); color: var(--ink); }
+.btnIcon.danger { color: var(--accent); }
+.btnIcon.danger:hover { border-color: #f1c0bf; background: #fff5f5; }
 .importPanel { display: grid; gap: 16px; }
 .importHeader { display: flex; justify-content: space-between; align-items: start; gap: 16px; padding-bottom: 4px; }
 .importKicker { display: inline-block; color: var(--accent); font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .14em; margin-bottom: 8px; }
@@ -422,7 +440,10 @@ img { max-width: 100%; display: block; }
   .templatePopup { max-height: calc(100vh - 20px); border-radius: 16px; padding: 12px; }
   .templatePanelHeader, .templateEditorHeader, .importHeader { flex-direction: column; align-items: stretch; }
   .templatePanelHeader button, .templateEditorHeader button { align-self: flex-end; }
-  .templateItem > div:last-child { width: 100%; }
+  .templateToolbar { justify-content: stretch; }
+  .templateToolbar .btn { width: 100%; }
+  .templateItem { grid-template-columns: 1fr; }
+  .templateItemActions { width: 100%; grid-template-columns: 1fr auto 34px 34px; justify-content: stretch; }
   .hero { min-height: 500px; }
   .heroContent { padding: 50px 24px; }
   .categoryStrip, .productGrid { grid-template-columns: repeat(2, 1fr); }
@@ -440,8 +461,9 @@ img { max-width: 100%; display: block; }
   .editorActions > div { width: 100%; }
   .editorActions .btn { flex: 1; }
   .templateEditor, .templateItem { gap: 10px; }
-  .templateItem { align-items: stretch; flex-direction: column; }
-  .templateItem > div:last-child { justify-content: flex-start; }
+  .templateTabs { display: grid; }
+  .templateItemActions { grid-template-columns: 1fr 1fr 34px 34px; }
+  .templateApplyChoice { grid-column: 1 / -1; justify-content: flex-start; }
   #adminProductsTable .adminTable { min-width: 0; }
   #adminProductsTable .adminTable th:nth-child(1),
   #adminProductsTable .adminTable td:nth-child(1),
